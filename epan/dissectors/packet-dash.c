@@ -51,8 +51,8 @@
 #include "packet-tcp.h"
 
 #define DASH_MAIN_MAGIC_NUMBER       0xBD6B0CBF 
-#define DASH_TESTNET_MAGIC_NUMBER    0xDAB5BFFA // Update to dash
-#define DASH_TESTNET3_MAGIC_NUMBER   0x0709110B // Update to dash
+#define DASH_REGTEST_MAGIC_NUMBER    0xDCB7C1FC
+#define DASH_TESTNET3_MAGIC_NUMBER   0xFFCAE2CE
 
 static const value_string inv_types[] =
 {
@@ -606,6 +606,28 @@ static header_field_info hfi_data_varint_count32 DASH_HFI_INIT =
 
 static header_field_info hfi_data_varint_count64 DASH_HFI_INIT =
   { "Count", "dash.data.count64", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL };
+
+/* dsq message */
+static header_field_info hfi_dash_msg_dsq DASH_HFI_INIT =
+  { "Darksend Queue message", "dash.dsq", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
+static header_field_info hfi_msg_dsq_denom DASH_HFI_INIT =
+  { "Denomination", "dash.dsq.denom", FT_UINT32, BASE_HEX, NULL, 0x0, NULL, HFILL };
+
+static header_field_info hfi_msg_dsq_vin_prev_outp_hash DASH_HFI_INIT =
+  { "Hash", "dash.dsq.vin.prev_output.hash", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
+static header_field_info hfi_msg_dsq_vin_prev_outp_index DASH_HFI_INIT =
+  { "Index", "dash.dsq.vin.prev_output.index", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
+
+static header_field_info hfi_msg_dsq_vin_seq DASH_HFI_INIT =
+  { "Sequence", "dash.dsq.vin.seq", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
+
+static header_field_info hfi_msg_dsq_time DASH_HFI_INIT =
+  { "Time", "dash.dsq.time", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
+
+static header_field_info hfi_msg_dsq_ready DASH_HFI_INIT =
+  { "Ready", "dash.dsq.ready", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
 
 static gint ett_dash = -1;
@@ -1596,6 +1618,60 @@ static int dissect_dash_tcp_pdu(tvbuff_t *tvb, packet_info *pinfo, proto_tree *t
   return tvb_reported_length(tvb);
 }
 
+/**
+ * Handler for dsq messages
+ */
+static int
+dissect_dash_msg_dsq(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, void *data _U_)
+{
+  proto_item *ti;
+  gint        script_length;
+  guint64     in_count;
+  guint32     offset = 0;
+
+  ti   = proto_tree_add_item(tree, &hfi_dash_msg_dsq, tvb, offset, -1, ENC_NA);
+  tree = proto_item_add_subtree(ti, ett_dash_msg);
+
+  // Denomination - Which denomination is allowed in this mixing session
+  proto_tree_add_item(tree, &hfi_msg_dsq_denom, tvb, offset, 4, ENC_LITTLE_ENDIAN);
+  offset += 4;
+
+  // vin (CTxIn) [41]
+  // Prevout (Hash) - this is currently incorrect endian format
+  proto_tree_add_item(tree, &hfi_msg_dsq_vin_prev_outp_hash, tvb, offset, 32, ENC_NA);
+  offset += 32;
+
+  // Prevout (index)
+  proto_tree_add_item(tree, &hfi_msg_dsq_vin_prev_outp_index, tvb, offset, 4, ENC_NA);
+  offset += 4;
+
+  // Script length
+  get_varint(tvb, offset, &script_length, &in_count);
+  add_varint_item(tree, tvb, offset, script_length, &hfi_msg_tx_in_script8, &hfi_msg_tx_in_script16,
+	                &hfi_msg_tx_in_script32, &hfi_msg_tx_in_script64);
+
+  offset += script_length;
+
+  //if (script_length > 0)
+  //{
+  //  Get script
+  //}
+
+  proto_tree_add_item(tree, &hfi_msg_dsq_vin_seq, tvb, offset, 4, ENC_NA);
+  offset += 4;
+
+  // Time - the time this DSQ was created
+  proto_tree_add_item(tree, &hfi_msg_dsq_time, tvb, offset, 4, ENC_NA);
+  offset += 4;
+
+  // Ready - if the mixing pool is ready to be executed
+  proto_tree_add_item(tree, &hfi_msg_dsq_ready, tvb, offset, 4, ENC_NA);
+
+    // vchSig - Signature of this message by masternode (verifiable via pubKeyMasternode)
+
+  return offset;
+}
+
 static int
 dissect_dash(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data)
 {
@@ -1617,7 +1693,7 @@ dissect_dash_heur(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *dat
 
   magic_number = tvb_get_letohl(tvb, 0);
   if ((magic_number != DASH_MAIN_MAGIC_NUMBER) &&
-      (magic_number != DASH_TESTNET_MAGIC_NUMBER) &&
+      (magic_number != DASH_REGTEST_MAGIC_NUMBER) &&
       (magic_number != DASH_TESTNET3_MAGIC_NUMBER))
      return FALSE;
 
@@ -1839,6 +1915,16 @@ proto_register_dash(void)
     &hfi_data_varint_count16,
     &hfi_data_varint_count32,
     &hfi_data_varint_count64,
+
+    /* dsq message */
+    &hfi_dash_msg_dsq,
+    &hfi_msg_dsq_denom,
+    &hfi_msg_dsq_vin_prev_outp_hash,
+    &hfi_msg_dsq_vin_prev_outp_index,
+    &hfi_msg_dsq_vin_seq,
+    &hfi_msg_dsq_time,
+    &hfi_msg_dsq_ready,
+//    &hfi_msg_dsq_vchsig,
   };
 #endif
 
@@ -1933,12 +2019,17 @@ proto_reg_handoff_dash(void)
   command_handle = create_dissector_handle( dissect_dash_msg_merkleblock, hfi_dash->id );
   dissector_add_string("dash.command", "merkleblock", command_handle);
 
+  /* Dash specific commands */
+  command_handle = create_dissector_handle( dissect_dash_msg_dsq, hfi_dash->id );
+  dissector_add_string("dash.command", "dsq", command_handle);
+
   /* messages with no payload */
   command_handle = create_dissector_handle( dissect_dash_msg_empty, hfi_dash->id );
   dissector_add_string("dash.command", "verack", command_handle);
   dissector_add_string("dash.command", "getaddr", command_handle);
   dissector_add_string("dash.command", "mempool", command_handle);
   dissector_add_string("dash.command", "filterclear", command_handle);
+  dissector_add_string("dash.command", "sendheaders", command_handle);
 
   /* messages not implemented */
   /* command_handle = create_dissector_handle( dissect_dash_msg_empty, hfi_dash->id ); */
