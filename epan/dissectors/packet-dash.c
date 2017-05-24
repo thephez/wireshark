@@ -50,16 +50,32 @@
 
 #include "packet-tcp.h"
 
-#define BITCOIN_MAIN_MAGIC_NUMBER       0xBD6B0CBF 
-//0xD9B4BEF9
-#define BITCOIN_TESTNET_MAGIC_NUMBER    0xDAB5BFFA
-#define BITCOIN_TESTNET3_MAGIC_NUMBER   0x0709110B
+#define DASH_MAIN_MAGIC_NUMBER       0xBD6B0CBF 
+#define DASH_TESTNET_MAGIC_NUMBER    0xDAB5BFFA // Update to dash
+#define DASH_TESTNET3_MAGIC_NUMBER   0x0709110B // Update to dash
 
 static const value_string inv_types[] =
 {
   { 0, "ERROR" },
   { 1, "MSG_TX" },
   { 2, "MSG_BLOCK" },
+  { 3, "MSG_FILTERED_BLOCK" },
+  { 4, "MSG_TXLOCK_REQUEST" },
+  { 5, "MSG_TXLOCK_VOTE" },
+  { 6, "MSG_SPORK" },
+  { 7, "MSG_MASTERNODE_PAYMENT_VOTE" },
+  { 8, "MSG_MASTERNODE_PAYMENT_BLOCK (prev. MSG_MASTERNODE_SCANNING_ERROR)" },
+  { 9, "MSG_BUDGET_VOTE (DEPRECATED)" },
+  { 10, "MSG_BUDGET_PROPOSAL (DEPRECATED)" },
+  { 11, "MSG_BUDGET_FINALIZED (DEPRECATED)" },
+  { 12, "MSG_BUDGET_FINALIZED_VOTE (DEPRECATED)" },
+  { 13, "MSG_MASTERNODE_QUORUM" },
+  { 14, "MSG_MASTERNODE_ANNOUNCE" },
+  { 15, "MSG_MASTERNODE_PING" },
+  { 16, "MSG_DSTX" },
+  { 17, "MSG_GOVERNANCE_OBJECT" },
+  { 18, "MSG_GOVERNANCE_OBJECT_VOTE" },
+  { 19, "MSG_MASTERNODE_VERIFY" },
   { 0, NULL }
 };
 
@@ -91,7 +107,7 @@ static const value_string filterload_nflags[] =
  * - Payload length - 4 bytes
  * - Checksum - 4 bytes
  */
-#define BITCOIN_HEADER_LENGTH 4+12+4+4
+#define DASH_HEADER_LENGTH 4+12+4+4
 
 void proto_register_dash(void);
 void proto_reg_handoff_dash(void);
@@ -102,493 +118,493 @@ static dissector_table_t dash_command_table;
 
 static header_field_info *hfi_dash = NULL;
 
-#define BITCOIN_HFI_INIT HFI_INIT(proto_dash)
+#define DASH_HFI_INIT HFI_INIT(proto_dash)
 
-static header_field_info hfi_dash_magic BITCOIN_HFI_INIT =
+static header_field_info hfi_dash_magic DASH_HFI_INIT =
   { "Packet magic", "dash.magic", FT_UINT32, BASE_HEX, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_dash_command BITCOIN_HFI_INIT =
+static header_field_info hfi_dash_command DASH_HFI_INIT =
   { "Command name", "dash.command", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_dash_length BITCOIN_HFI_INIT =
+static header_field_info hfi_dash_length DASH_HFI_INIT =
   { "Payload Length", "dash.length", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_dash_checksum BITCOIN_HFI_INIT =
+static header_field_info hfi_dash_checksum DASH_HFI_INIT =
   { "Payload checksum", "dash.checksum", FT_UINT32, BASE_HEX, NULL, 0x0, NULL, HFILL };
 
 /* version message */
-static header_field_info hfi_dash_msg_version BITCOIN_HFI_INIT =
+static header_field_info hfi_dash_msg_version DASH_HFI_INIT =
   { "Version message", "dash.version", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_version_version BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_version_version DASH_HFI_INIT =
   { "Protocol version", "dash.version.version", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_version_services BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_version_services DASH_HFI_INIT =
   { "Node services", "dash.version.services", FT_UINT64, BASE_HEX, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_version_timestamp BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_version_timestamp DASH_HFI_INIT =
   { "Node timestamp", "dash.version.timestamp", FT_ABSOLUTE_TIME, ABSOLUTE_TIME_LOCAL, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_version_addr_me BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_version_addr_me DASH_HFI_INIT =
   { "Address of emmitting node", "dash.version.addr_me", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_version_addr_you BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_version_addr_you DASH_HFI_INIT =
   { "Address as receiving node", "dash.version.addr_you", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_version_nonce BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_version_nonce DASH_HFI_INIT =
   { "Random nonce", "dash.version.nonce", FT_UINT64, BASE_HEX, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_version_user_agent BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_version_user_agent DASH_HFI_INIT =
   { "User agent", "dash.version.user_agent", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_version_start_height BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_version_start_height DASH_HFI_INIT =
   { "Block start height", "dash.version.start_height", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_version_relay BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_version_relay DASH_HFI_INIT =
   { "Relay flag", "dash.version.relay", FT_UINT8, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
 /* addr message */
-static header_field_info hfi_msg_addr_count8 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_addr_count8 DASH_HFI_INIT =
   { "Count", "dash.addr.count", FT_UINT8, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_addr_count16 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_addr_count16 DASH_HFI_INIT =
   { "Count", "dash.addr.count", FT_UINT16, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_addr_count32 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_addr_count32 DASH_HFI_INIT =
   { "Count", "dash.addr.count", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_addr_count64 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_addr_count64 DASH_HFI_INIT =
   { "Count", "dash.addr.count64", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_dash_msg_addr BITCOIN_HFI_INIT =
+static header_field_info hfi_dash_msg_addr DASH_HFI_INIT =
   { "Address message", "dash.addr", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_addr_address BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_addr_address DASH_HFI_INIT =
   { "Address", "dash.addr.address", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_addr_timestamp BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_addr_timestamp DASH_HFI_INIT =
   { "Address timestamp", "dash.addr.timestamp", FT_ABSOLUTE_TIME, ABSOLUTE_TIME_LOCAL, NULL, 0x0, NULL, HFILL };
 
 /* inv message */
-static header_field_info hfi_msg_inv_count8 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_inv_count8 DASH_HFI_INIT =
   { "Count", "dash.inv.count", FT_UINT8, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_inv_count16 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_inv_count16 DASH_HFI_INIT =
   { "Count", "dash.inv.count", FT_UINT16, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_inv_count32 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_inv_count32 DASH_HFI_INIT =
   { "Count", "dash.inv.count", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_inv_count64 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_inv_count64 DASH_HFI_INIT =
   { "Count", "dash.inv.count64", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_dash_msg_inv BITCOIN_HFI_INIT =
+static header_field_info hfi_dash_msg_inv DASH_HFI_INIT =
   { "Inventory message", "dash.inv", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_inv_type BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_inv_type DASH_HFI_INIT =
   { "Type", "dash.inv.type", FT_UINT32, BASE_DEC, VALS(inv_types), 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_inv_hash BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_inv_hash DASH_HFI_INIT =
   { "Data hash", "dash.inv.hash", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
 /* getdata message */
-static header_field_info hfi_dash_msg_getdata BITCOIN_HFI_INIT =
+static header_field_info hfi_dash_msg_getdata DASH_HFI_INIT =
   { "Getdata message", "dash.getdata", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_getdata_count8 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_getdata_count8 DASH_HFI_INIT =
   { "Count", "dash.getdata.count", FT_UINT8, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_getdata_count16 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_getdata_count16 DASH_HFI_INIT =
   { "Count", "dash.getdata.count", FT_UINT16, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_getdata_count32 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_getdata_count32 DASH_HFI_INIT =
   { "Count", "dash.getdata.count", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_getdata_count64 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_getdata_count64 DASH_HFI_INIT =
   { "Count", "dash.getdata.count64", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_getdata_type BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_getdata_type DASH_HFI_INIT =
   { "Type", "dash.getdata.type", FT_UINT32, BASE_DEC, VALS(inv_types), 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_getdata_hash BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_getdata_hash DASH_HFI_INIT =
   { "Data hash", "dash.getdata.hash", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
 /* notfound message */
-static header_field_info hfi_msg_notfound_count8 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_notfound_count8 DASH_HFI_INIT =
   { "Count", "dash.notfound.count", FT_UINT8, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_notfound_count16 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_notfound_count16 DASH_HFI_INIT =
   { "Count", "dash.notfound.count", FT_UINT16, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_notfound_count32 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_notfound_count32 DASH_HFI_INIT =
   { "Count", "dash.notfound.count", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_notfound_count64 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_notfound_count64 DASH_HFI_INIT =
   { "Count", "dash.notfound.count64", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_dash_msg_notfound BITCOIN_HFI_INIT =
+static header_field_info hfi_dash_msg_notfound DASH_HFI_INIT =
   { "Getdata message", "dash.notfound", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_notfound_type BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_notfound_type DASH_HFI_INIT =
   { "Type", "dash.notfound.type", FT_UINT32, BASE_DEC, VALS(inv_types), 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_notfound_hash BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_notfound_hash DASH_HFI_INIT =
   { "Data hash", "dash.notfound.hash", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
 /* getblocks message */
-static header_field_info hfi_msg_getblocks_count8 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_getblocks_count8 DASH_HFI_INIT =
   { "Count", "dash.getblocks.count", FT_UINT8, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_getblocks_count16 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_getblocks_count16 DASH_HFI_INIT =
   { "Count", "dash.getblocks.count", FT_UINT16, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_getblocks_count32 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_getblocks_count32 DASH_HFI_INIT =
   { "Count", "dash.getblocks.count", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_getblocks_count64 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_getblocks_count64 DASH_HFI_INIT =
   { "Count", "dash.getblocks.count64", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_dash_msg_getblocks BITCOIN_HFI_INIT =
+static header_field_info hfi_dash_msg_getblocks DASH_HFI_INIT =
   { "Getdata message", "dash.getblocks", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_getblocks_start BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_getblocks_start DASH_HFI_INIT =
   { "Starting hash", "dash.getblocks.hash_start", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_getblocks_stop BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_getblocks_stop DASH_HFI_INIT =
   { "Stopping hash", "dash.getblocks.hash_stop", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
 /* getheaders message */
-static header_field_info hfi_msg_getheaders_count8 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_getheaders_count8 DASH_HFI_INIT =
   { "Count", "dash.getheaders.count", FT_UINT8, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_getheaders_count16 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_getheaders_count16 DASH_HFI_INIT =
   { "Count", "dash.getheaders.count", FT_UINT16, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_getheaders_count32 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_getheaders_count32 DASH_HFI_INIT =
   { "Count", "dash.getheaders.count", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_getheaders_count64 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_getheaders_count64 DASH_HFI_INIT =
   { "Count", "dash.getheaders.count64", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
 #if 0
-static header_field_info hfi_msg_getheaders_version BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_getheaders_version DASH_HFI_INIT =
   { "Protocol version", "dash.headers.version", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 #endif
 
-static header_field_info hfi_dash_msg_getheaders BITCOIN_HFI_INIT =
+static header_field_info hfi_dash_msg_getheaders DASH_HFI_INIT =
   { "Getheaders message", "dash.getheaders", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_getheaders_start BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_getheaders_start DASH_HFI_INIT =
   { "Starting hash", "dash.getheaders.hash_start", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_getheaders_stop BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_getheaders_stop DASH_HFI_INIT =
   { "Stopping hash", "dash.getheaders.hash_stop", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
 /* tx message */
-static header_field_info hfi_msg_tx_in_count8 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_in_count8 DASH_HFI_INIT =
   { "Input Count", "dash.tx.input_count", FT_UINT8, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_tx_in_count16 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_in_count16 DASH_HFI_INIT =
   { "Input Count", "dash.tx.input_count", FT_UINT16, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_tx_in_count32 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_in_count32 DASH_HFI_INIT =
   { "Input Count", "dash.tx.input_count", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_tx_in_count64 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_in_count64 DASH_HFI_INIT =
   { "Input Count", "dash.tx.input_count64", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_dash_msg_tx BITCOIN_HFI_INIT =
+static header_field_info hfi_dash_msg_tx DASH_HFI_INIT =
   { "Tx message", "dash.tx", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_tx_version BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_version DASH_HFI_INIT =
   { "Transaction version", "dash.tx.version", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_tx_in_script8 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_in_script8 DASH_HFI_INIT =
   { "Script Length", "dash.tx.in.script_length", FT_UINT8, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_tx_in_script16 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_in_script16 DASH_HFI_INIT =
   { "Script Length", "dash.tx.in.script_length", FT_UINT16, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_tx_in_script32 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_in_script32 DASH_HFI_INIT =
   { "Script Length", "dash.tx.in.script_length", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_tx_in_script64 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_in_script64 DASH_HFI_INIT =
   { "Script Length", "dash.tx.in.script_length64", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_tx_in BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_in DASH_HFI_INIT =
   { "Transaction input", "dash.tx.in", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_tx_in_prev_output BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_in_prev_output DASH_HFI_INIT =
   { "Previous output", "dash.tx.in.prev_output", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_tx_in_prev_outp_hash BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_in_prev_outp_hash DASH_HFI_INIT =
   { "Hash", "dash.tx.in.prev_output.hash", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_tx_in_prev_outp_index BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_in_prev_outp_index DASH_HFI_INIT =
   { "Index", "dash.tx.in.prev_output.index", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_tx_in_sig_script BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_in_sig_script DASH_HFI_INIT =
   { "Signature script", "dash.tx.in.sig_script", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_tx_in_seq BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_in_seq DASH_HFI_INIT =
   { "Sequence", "dash.tx.in.seq", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_tx_out_count8 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_out_count8 DASH_HFI_INIT =
   { "Output Count", "dash.tx.output_count", FT_UINT8, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_tx_out_count16 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_out_count16 DASH_HFI_INIT =
   { "Output Count", "dash.tx.output_count", FT_UINT16, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_tx_out_count32 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_out_count32 DASH_HFI_INIT =
   { "Output Count", "dash.tx.output_count", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_tx_out_count64 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_out_count64 DASH_HFI_INIT =
   { "Output Count", "dash.tx.output_count64", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_tx_out BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_out DASH_HFI_INIT =
   { "Transaction output", "dash.tx.out", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_tx_out_value BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_out_value DASH_HFI_INIT =
   { "Value", "dash.tx.out.value", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_tx_out_script8 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_out_script8 DASH_HFI_INIT =
   { "Script Length", "dash.tx.out.script_length", FT_UINT8, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_tx_out_script16 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_out_script16 DASH_HFI_INIT =
   { "Script Length", "dash.tx.out.script_length", FT_UINT16, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_tx_out_script32 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_out_script32 DASH_HFI_INIT =
   { "Script Length", "dash.tx.out.script_length", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_tx_out_script64 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_out_script64 DASH_HFI_INIT =
   { "Script Length", "dash.tx.out.script_length64", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_tx_out_script BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_out_script DASH_HFI_INIT =
   { "Script", "dash.tx.out.script", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_tx_lock_time BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_tx_lock_time DASH_HFI_INIT =
   { "Block lock time or block ID", "dash.tx.lock_time", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
 /* block message */
-static header_field_info hfi_msg_block_transactions8 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_block_transactions8 DASH_HFI_INIT =
   { "Number of transactions", "dash.block.num_transactions", FT_UINT8, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_block_transactions16 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_block_transactions16 DASH_HFI_INIT =
   { "Number of transactions", "dash.block.num_transactions", FT_UINT16, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_block_transactions32 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_block_transactions32 DASH_HFI_INIT =
   { "Number of transactions", "dash.block.num_transactions", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_block_transactions64 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_block_transactions64 DASH_HFI_INIT =
   { "Number of transactions", "dash.block.num_transactions64", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_dash_msg_block BITCOIN_HFI_INIT =
+static header_field_info hfi_dash_msg_block DASH_HFI_INIT =
   { "Block message", "dash.block", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_block_version BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_block_version DASH_HFI_INIT =
   { "Block version", "dash.block.version", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_block_prev_block BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_block_prev_block DASH_HFI_INIT =
   { "Previous block", "dash.block.prev_block", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_block_merkle_root BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_block_merkle_root DASH_HFI_INIT =
   { "Merkle root", "dash.block.merkle_root", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_block_time BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_block_time DASH_HFI_INIT =
   { "Block timestamp", "dash.block.timestamp", FT_ABSOLUTE_TIME, ABSOLUTE_TIME_LOCAL, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_block_bits BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_block_bits DASH_HFI_INIT =
   { "Bits", "dash.block.bits", FT_UINT32, BASE_HEX, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_block_nonce BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_block_nonce DASH_HFI_INIT =
   { "Nonce", "dash.block.nonce", FT_UINT32, BASE_HEX, NULL, 0x0, NULL, HFILL };
 
 /* headers message */
-static header_field_info hfi_dash_msg_headers BITCOIN_HFI_INIT =
+static header_field_info hfi_dash_msg_headers DASH_HFI_INIT =
   { "Headers message", "dash.headers", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_headers_version BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_headers_version DASH_HFI_INIT =
   { "Block version", "dash.headers.version", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_headers_prev_block BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_headers_prev_block DASH_HFI_INIT =
   { "Previous block", "dash.headers.prev_block", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_headers_merkle_root BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_headers_merkle_root DASH_HFI_INIT =
   { "Merkle root", "dash.headers.merkle_root", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_headers_time BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_headers_time DASH_HFI_INIT =
   { "Block timestamp", "dash.headers.timestamp", FT_ABSOLUTE_TIME, ABSOLUTE_TIME_LOCAL, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_headers_bits BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_headers_bits DASH_HFI_INIT =
   { "Bits", "dash.headers.bits", FT_UINT32, BASE_HEX, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_headers_nonce BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_headers_nonce DASH_HFI_INIT =
   { "Nonce", "dash.headers.nonce", FT_UINT32, BASE_HEX, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_headers_count8 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_headers_count8 DASH_HFI_INIT =
   { "Count", "dash.headers.count", FT_UINT8, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_headers_count16 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_headers_count16 DASH_HFI_INIT =
   { "Count", "dash.headers.count", FT_UINT16, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_headers_count32 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_headers_count32 DASH_HFI_INIT =
   { "Count", "dash.headers.count", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_headers_count64 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_headers_count64 DASH_HFI_INIT =
   { "Count", "dash.headers.count64", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
 /* ping message */
-static header_field_info hfi_dash_msg_ping BITCOIN_HFI_INIT =
+static header_field_info hfi_dash_msg_ping DASH_HFI_INIT =
   { "Ping message", "dash.ping", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_ping_nonce BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_ping_nonce DASH_HFI_INIT =
   { "Random nonce", "dash.ping.nonce", FT_UINT64, BASE_HEX, NULL, 0x0, NULL, HFILL };
 
 /* pong message */
-static header_field_info hfi_dash_msg_pong BITCOIN_HFI_INIT =
+static header_field_info hfi_dash_msg_pong DASH_HFI_INIT =
   { "Pong message", "dash.pong", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_pong_nonce BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_pong_nonce DASH_HFI_INIT =
   { "Random nonce", "dash.pong.nonce", FT_UINT64, BASE_HEX, NULL, 0x0, NULL, HFILL };
 
 /* reject message */
-static header_field_info hfi_dash_msg_reject BITCOIN_HFI_INIT =
+static header_field_info hfi_dash_msg_reject DASH_HFI_INIT =
   { "Reject message", "dash.reject", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_reject_message BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_reject_message DASH_HFI_INIT =
   { "Message rejected", "dash.reject.message", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_reject_reason BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_reject_reason DASH_HFI_INIT =
   { "Reason", "dash.reject.reason", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_reject_ccode BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_reject_ccode DASH_HFI_INIT =
   { "CCode", "dash.reject.ccode", FT_UINT8, BASE_HEX, VALS(reject_ccode), 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_reject_data BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_reject_data DASH_HFI_INIT =
   { "Data", "dash.reject.data", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
 /* filterload message */
-static header_field_info hfi_dash_msg_filterload BITCOIN_HFI_INIT =
+static header_field_info hfi_dash_msg_filterload DASH_HFI_INIT =
   { "Filterload message", "dash.filterload", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_filterload_filter BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_filterload_filter DASH_HFI_INIT =
   { "Filter", "dash.filterload.filter", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_filterload_nhashfunc BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_filterload_nhashfunc DASH_HFI_INIT =
   { "nHashFunc", "dash.filterload.nhashfunc", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_filterload_ntweak BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_filterload_ntweak DASH_HFI_INIT =
   { "nTweak", "dash.filterload.ntweak", FT_UINT32, BASE_HEX, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_filterload_nflags BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_filterload_nflags DASH_HFI_INIT =
   { "nFlags", "dash.filterload.nflags", FT_UINT8, BASE_HEX, VALS(filterload_nflags), 0x0, NULL, HFILL };
 
 /* filteradd message */
-static header_field_info hfi_dash_msg_filteradd BITCOIN_HFI_INIT =
+static header_field_info hfi_dash_msg_filteradd DASH_HFI_INIT =
   { "Filteradd message", "dash.filteradd", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_filteradd_data BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_filteradd_data DASH_HFI_INIT =
   { "Data", "dash.filteradd.data", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
 /* merkleblock message */
-static header_field_info hfi_dash_msg_merkleblock BITCOIN_HFI_INIT =
+static header_field_info hfi_dash_msg_merkleblock DASH_HFI_INIT =
   { "Merkleblock message", "dash.merkleblock", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_merkleblock_transactions BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_merkleblock_transactions DASH_HFI_INIT =
   { "Number of transactions", "dash.merkleblock.num_transactions", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_merkleblock_version BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_merkleblock_version DASH_HFI_INIT =
   { "Block version", "dash.merkleblock.version", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_merkleblock_prev_block BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_merkleblock_prev_block DASH_HFI_INIT =
   { "Previous block", "dash.merkleblock.prev_block", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_merkleblock_merkle_root BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_merkleblock_merkle_root DASH_HFI_INIT =
   { "Merkle root", "dash.merkleblock.merkle_root", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_merkleblock_time BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_merkleblock_time DASH_HFI_INIT =
   { "Block timestamp", "dash.merkleblock.timestamp", FT_ABSOLUTE_TIME, ABSOLUTE_TIME_LOCAL, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_merkleblock_bits BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_merkleblock_bits DASH_HFI_INIT =
   { "Bits", "dash.merkleblock.bits", FT_UINT32, BASE_HEX, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_merkleblock_nonce BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_merkleblock_nonce DASH_HFI_INIT =
   { "Nonce", "dash.merkleblock.nonce", FT_UINT32, BASE_HEX, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_merkleblock_hashes_count8 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_merkleblock_hashes_count8 DASH_HFI_INIT =
   { "Count", "dash.merkleblock.hashes.count", FT_UINT8, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_merkleblock_hashes_count16 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_merkleblock_hashes_count16 DASH_HFI_INIT =
   { "Count", "dash.merkleblock.hashes.count", FT_UINT16, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_merkleblock_hashes_count32 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_merkleblock_hashes_count32 DASH_HFI_INIT =
   { "Count", "dash.merkleblock.hashes.count", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_merkleblock_hashes_count64 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_merkleblock_hashes_count64 DASH_HFI_INIT =
   { "Count", "dash.merkleblock.hashes.count64", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_merkleblock_hashes_hash BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_merkleblock_hashes_hash DASH_HFI_INIT =
   { "Hash", "dash.merkleblock.hashes.hash", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_merkleblock_flags_size8 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_merkleblock_flags_size8 DASH_HFI_INIT =
   { "Size", "dash.merkleblock.flags.count", FT_UINT8, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_merkleblock_flags_size16 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_merkleblock_flags_size16 DASH_HFI_INIT =
   { "Size", "dash.merkleblock.flags.count", FT_UINT16, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_merkleblock_flags_size32 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_merkleblock_flags_size32 DASH_HFI_INIT =
   { "Size", "dash.merkleblock.flags.count", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_merkleblock_flags_size64 BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_merkleblock_flags_size64 DASH_HFI_INIT =
   { "Size", "dash.merkleblock.flags.count64", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_msg_merkleblock_flags_data BITCOIN_HFI_INIT =
+static header_field_info hfi_msg_merkleblock_flags_data DASH_HFI_INIT =
   { "Data", "dash.merkleblock.flags.data", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
 /* services */
-static header_field_info hfi_services_network BITCOIN_HFI_INIT =
+static header_field_info hfi_services_network DASH_HFI_INIT =
   { "Network node", "dash.services.network", FT_BOOLEAN, 32, TFS(&tfs_set_notset), 0x1, NULL, HFILL };
 
 /* address */
-static header_field_info hfi_address_services BITCOIN_HFI_INIT =
+static header_field_info hfi_address_services DASH_HFI_INIT =
   { "Node services", "dash.address.services", FT_UINT64, BASE_HEX, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_address_address BITCOIN_HFI_INIT =
+static header_field_info hfi_address_address DASH_HFI_INIT =
   { "Node address", "dash.address.address", FT_IPv6, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_address_port BITCOIN_HFI_INIT =
+static header_field_info hfi_address_port DASH_HFI_INIT =
   { "Node port", "dash.address.port", FT_UINT16, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
 /* variable string */
-static header_field_info hfi_string_value BITCOIN_HFI_INIT =
+static header_field_info hfi_string_value DASH_HFI_INIT =
   { "String value", "dash.string.value", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_string_varint_count8 BITCOIN_HFI_INIT =
+static header_field_info hfi_string_varint_count8 DASH_HFI_INIT =
   { "Count", "dash.string.count", FT_UINT8, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_string_varint_count16 BITCOIN_HFI_INIT =
+static header_field_info hfi_string_varint_count16 DASH_HFI_INIT =
   { "Count", "dash.string.count", FT_UINT16, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_string_varint_count32 BITCOIN_HFI_INIT =
+static header_field_info hfi_string_varint_count32 DASH_HFI_INIT =
   { "Count", "dash.string.count", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_string_varint_count64 BITCOIN_HFI_INIT =
+static header_field_info hfi_string_varint_count64 DASH_HFI_INIT =
   { "Count", "dash.string.count64", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
 /* variable data */
-static header_field_info hfi_data_value BITCOIN_HFI_INIT =
+static header_field_info hfi_data_value DASH_HFI_INIT =
   { "Data", "dash.data.value", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_data_varint_count8 BITCOIN_HFI_INIT =
+static header_field_info hfi_data_varint_count8 DASH_HFI_INIT =
   { "Count", "dash.data.count", FT_UINT8, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_data_varint_count16 BITCOIN_HFI_INIT =
+static header_field_info hfi_data_varint_count16 DASH_HFI_INIT =
   { "Count", "dash.data.count", FT_UINT16, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_data_varint_count32 BITCOIN_HFI_INIT =
+static header_field_info hfi_data_varint_count32 DASH_HFI_INIT =
   { "Count", "dash.data.count", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-static header_field_info hfi_data_varint_count64 BITCOIN_HFI_INIT =
+static header_field_info hfi_data_varint_count64 DASH_HFI_INIT =
   { "Count", "dash.data.count64", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
 
@@ -618,7 +634,7 @@ get_dash_pdu_length(packet_info *pinfo _U_, tvbuff_t *tvb,
                        int offset, void *data _U_)
 {
   guint32 length;
-  length = BITCOIN_HEADER_LENGTH;
+  length = DASH_HEADER_LENGTH;
 
   /* add payload length */
   length += tvb_get_letohl(tvb, offset+16);
@@ -1584,7 +1600,7 @@ static int
 dissect_dash(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data)
 {
   col_clear(pinfo->cinfo, COL_INFO);
-  tcp_dissect_pdus(tvb, pinfo, tree, dash_desegment, BITCOIN_HEADER_LENGTH,
+  tcp_dissect_pdus(tvb, pinfo, tree, dash_desegment, DASH_HEADER_LENGTH,
       get_dash_pdu_length, dissect_dash_tcp_pdu, data);
 
   return tvb_reported_length(tvb);
@@ -1600,9 +1616,9 @@ dissect_dash_heur(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *dat
       return FALSE;
 
   magic_number = tvb_get_letohl(tvb, 0);
-  if ((magic_number != BITCOIN_MAIN_MAGIC_NUMBER) &&
-      (magic_number != BITCOIN_TESTNET_MAGIC_NUMBER) &&
-      (magic_number != BITCOIN_TESTNET3_MAGIC_NUMBER))
+  if ((magic_number != DASH_MAIN_MAGIC_NUMBER) &&
+      (magic_number != DASH_TESTNET_MAGIC_NUMBER) &&
+      (magic_number != DASH_TESTNET3_MAGIC_NUMBER))
      return FALSE;
 
   /* Ok: This connection should always use the dash dissector */
