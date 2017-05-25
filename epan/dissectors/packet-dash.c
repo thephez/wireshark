@@ -609,38 +609,6 @@ static header_field_info hfi_data_varint_count32 DASH_HFI_INIT =
 static header_field_info hfi_data_varint_count64 DASH_HFI_INIT =
   { "Count", "dash.data.count64", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-/* dsq message - Darksend Queue 
-	Field Size 	Field Name 	Data type 	Description
-	4 		nDenom 		int 		Which denomination is allowed in this mixing session
-	41 		vin 		CTxIn 		Unspent output from masternode which is hosting this session
-	4 		nTime 		int 		The time this DSQ was created
-	4 		fReady 		int 		If the mixing pool is ready to be executed
-	71-73 		vchSig 		char[] 		Signature of this message by masternode (verifiable via pubKeyMasternode)
-*/
-static header_field_info hfi_dash_msg_dsq DASH_HFI_INIT =
-  { "Darksend Queue message", "dash.dsq", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
-
-static header_field_info hfi_msg_dsq_denom DASH_HFI_INIT =
-  { "Denomination", "dash.dsq.denom", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
-
-static header_field_info hfi_msg_dsq_vin_prev_outp_hash DASH_HFI_INIT =
-  { "Hash", "dash.dsq.vin.prev_output.hash", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
-
-static header_field_info hfi_msg_dsq_vin_prev_outp_index DASH_HFI_INIT =
-  { "Index", "dash.dsq.vin.prev_output.index", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
-
-static header_field_info hfi_msg_dsq_vin_seq DASH_HFI_INIT =
-  { "Sequence", "dash.dsq.vin.seq", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
-
-static header_field_info hfi_msg_dsq_time DASH_HFI_INIT =
-  { "Create Time", "dash.dsq.time", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
-
-static header_field_info hfi_msg_dsq_ready DASH_HFI_INIT =
-  { "Ready", "dash.dsq.ready", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
-
-static header_field_info hfi_msg_dsq_vchsig DASH_HFI_INIT =
-  { "Masternode Signature", "dash.dsq.vchsig", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
-
 /* mnb - Masternode Broadcast
 	Whenever a masternode comes online or a client is syncing, 
 	they will send this message which describes the masternode entry and how to validate messages from it.
@@ -691,6 +659,92 @@ static header_field_info hfi_msg_mnp_vchsig DASH_HFI_INIT =
 */
 static header_field_info hfi_dash_msg_mnw DASH_HFI_INIT =
   { "Masternode Payment Vote message", "dash.mnw", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
+/* dstx - Darksend Broadcast
+	Masternodes can broadcast subsidised transactions without fees for the sake of security in mixing. This is done via the DSTX message.
+*/
+static header_field_info hfi_dash_msg_dstx DASH_HFI_INIT =
+  { "Darksend Broadcast message", "dash.dstx", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
+/* dssu - Mixing pool status update
+	Mixing pool status update
+*/
+static header_field_info hfi_dash_msg_dssu DASH_HFI_INIT =
+  { "Mixing Pool Status Update message", "dash.dssu", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
+/* dsq message - Darksend Queue 
+	Field Size 	Field Name 	Data type 	Description
+	4 		nDenom 		int 		Which denomination is allowed in this mixing session
+	41 		vin 		CTxIn 		Unspent output from masternode which is hosting this session
+	4 		nTime 		int 		The time this DSQ was created
+	4 		fReady 		int 		If the mixing pool is ready to be executed
+	71-73 		vchSig 		char[] 		Signature of this message by masternode (verifiable via pubKeyMasternode)
+*/
+static header_field_info hfi_dash_msg_dsq DASH_HFI_INIT =
+  { "Darksend Queue message", "dash.dsq", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
+static header_field_info hfi_msg_dsq_denom DASH_HFI_INIT =
+  { "Denomination", "dash.dsq.denom", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
+
+static header_field_info hfi_msg_dsq_vin_prev_outp_hash DASH_HFI_INIT =
+  { "Hash", "dash.dsq.vin.prev_output.hash", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
+static header_field_info hfi_msg_dsq_vin_prev_outp_index DASH_HFI_INIT =
+  { "Index", "dash.dsq.vin.prev_output.index", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
+
+static header_field_info hfi_msg_dsq_vin_seq DASH_HFI_INIT =
+  { "Sequence", "dash.dsq.vin.seq", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
+
+static header_field_info hfi_msg_dsq_time DASH_HFI_INIT =
+  { "Create Time", "dash.dsq.time", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
+
+static header_field_info hfi_msg_dsq_ready DASH_HFI_INIT =
+  { "Ready", "dash.dsq.ready", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
+
+static header_field_info hfi_msg_dsq_vchsig DASH_HFI_INIT =
+  { "Masternode Signature", "dash.dsq.vchsig", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
+/* dsa - Darksend Accept
+	Response to DSQ message which allows the user to join a mixing pool
+*/
+static header_field_info hfi_dash_msg_dsa DASH_HFI_INIT =
+  { "Darksend Accept message", "dash.dsa", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
+/* dsi - Darksend Entry
+	When queue is ready user is expected to send his entry to start actual mixing
+*/
+static header_field_info hfi_dash_msg_dsi DASH_HFI_INIT =
+  { "Darksend Entry message", "dash.dsi", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
+/* dss - Darksend Sign Final Transaction
+	User's signed inputs for a group transaction in a mixing session
+*/
+static header_field_info hfi_dash_msg_dss DASH_HFI_INIT =
+  { "Darksend Sign Final Tx message", "dash.dss", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
+/* ix - Tx Lock Request
+	Transaction Lock Request, serialization is the same as for CTransaction.
+*/
+static header_field_info hfi_dash_msg_ix DASH_HFI_INIT =
+  { "Tx Lock Request message", "dash.ix", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
+/* txlvote - Tx Lock Vote
+	Transaction Lock Vote
+*/
+static header_field_info hfi_dash_msg_txlvote DASH_HFI_INIT =
+  { "Transaction Lock Vote message", "dash.txlvote", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
+/* govobj - Governance Object
+	A proposal, contract or setting.
+*/
+static header_field_info hfi_dash_msg_govobj DASH_HFI_INIT =
+  { "Governance Object message", "dash.govobj", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
+/* govobjvote - Governance Vote
+	Masternodes use governance voting in response to new proposals, contracts, settings or finalized budgets.
+*/
+static header_field_info hfi_dash_msg_govobjvote DASH_HFI_INIT =
+  { "Governance Vote message", "dash.govobjvote", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
 
 /* spork - Spork
@@ -1888,6 +1942,142 @@ dissect_dash_msg_mnw(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, vo
 }
 
 /**
+ * Handler for dstx messages
+ */
+static int
+dissect_dash_msg_dstx(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, void *data _U_)
+{
+  proto_item *ti;
+  guint32     offset = 0;
+
+  ti   = proto_tree_add_item(tree, &hfi_dash_msg_dstx, tvb, offset, -1, ENC_NA);
+  tree = proto_item_add_subtree(ti, ett_dash_msg);
+
+  return offset;
+}
+
+/**
+ * Handler for dssu messages
+ */
+static int
+dissect_dash_msg_dssu(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, void *data _U_)
+{
+  proto_item *ti;
+  guint32     offset = 0;
+
+  ti   = proto_tree_add_item(tree, &hfi_dash_msg_dssu, tvb, offset, -1, ENC_NA);
+  tree = proto_item_add_subtree(ti, ett_dash_msg);
+
+  return offset;
+}
+
+/**
+ * Handler for dsa messages
+ */
+static int
+dissect_dash_msg_dsa(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, void *data _U_)
+{
+  proto_item *ti;
+  guint32     offset = 0;
+
+  ti   = proto_tree_add_item(tree, &hfi_dash_msg_dsa, tvb, offset, -1, ENC_NA);
+  tree = proto_item_add_subtree(ti, ett_dash_msg);
+
+  return offset;
+}
+
+/**
+ * Handler for dsi messages
+ */
+static int
+dissect_dash_msg_dsi(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, void *data _U_)
+{
+  proto_item *ti;
+  guint32     offset = 0;
+
+  ti   = proto_tree_add_item(tree, &hfi_dash_msg_dsi, tvb, offset, -1, ENC_NA);
+  tree = proto_item_add_subtree(ti, ett_dash_msg);
+
+  return offset;
+}
+
+/**
+ * Handler for dss messages
+ */
+static int
+dissect_dash_msg_dss(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, void *data _U_)
+{
+  proto_item *ti;
+  guint32     offset = 0;
+
+  ti   = proto_tree_add_item(tree, &hfi_dash_msg_dss, tvb, offset, -1, ENC_NA);
+  tree = proto_item_add_subtree(ti, ett_dash_msg);
+
+  return offset;
+}
+
+/**
+ * Handler for ix messages
+ */
+static int
+dissect_dash_msg_ix(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, void *data _U_)
+{
+  proto_item *ti;
+  guint32     offset = 0;
+
+  ti   = proto_tree_add_item(tree, &hfi_dash_msg_ix, tvb, offset, -1, ENC_NA);
+  tree = proto_item_add_subtree(ti, ett_dash_msg);
+
+  return offset;
+}
+
+/**
+ * Handler for txlvote messages
+ */
+static int
+dissect_dash_msg_txlvote(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, void *data _U_)
+{
+  proto_item *ti;
+  guint32     offset = 0;
+
+  ti   = proto_tree_add_item(tree, &hfi_dash_msg_txlvote, tvb, offset, -1, ENC_NA);
+  tree = proto_item_add_subtree(ti, ett_dash_msg);
+
+  return offset;
+}
+
+/**
+ * Handler for govobj messages
+ */
+static int
+dissect_dash_msg_govobj(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, void *data _U_)
+{
+  proto_item *ti;
+  guint32     offset = 0;
+
+  ti   = proto_tree_add_item(tree, &hfi_dash_msg_govobj, tvb, offset, -1, ENC_NA);
+  tree = proto_item_add_subtree(ti, ett_dash_msg);
+
+  return offset;
+}
+
+/**
+ * Handler for govobjvote messages
+ */
+static int
+dissect_dash_msg_govobjvote(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, void *data _U_)
+{
+  proto_item *ti;
+  guint32     offset = 0;
+
+  ti   = proto_tree_add_item(tree, &hfi_dash_msg_govobjvote, tvb, offset, -1, ENC_NA);
+  tree = proto_item_add_subtree(ti, ett_dash_msg);
+
+  return offset;
+}
+
+
+/**
  * Handler for spork messages
  */
 static int
@@ -2192,16 +2382,6 @@ proto_register_dash(void)
     &hfi_data_varint_count32,
     &hfi_data_varint_count64,
 
-    /* dsq message */
-    &hfi_dash_msg_dsq,
-    &hfi_msg_dsq_denom,
-    &hfi_msg_dsq_vin_prev_outp_hash,
-    &hfi_msg_dsq_vin_prev_outp_index,
-    &hfi_msg_dsq_vin_seq,
-    &hfi_msg_dsq_time,
-    &hfi_msg_dsq_ready,
-    &hfi_msg_dsq_vchsig,
-
     /* mnp message */
     &hfi_dash_msg_mnp,
     &hfi_msg_mnp_blockhash,
@@ -2213,6 +2393,44 @@ proto_register_dash(void)
 
     /* mnw message */
     &hfi_dash_msg_mnw,
+
+    /* dstx message */
+    &hfi_dash_msg_dstx,
+
+    /* dssu message */
+    &hfi_dash_msg_dssu,
+
+    /* dsq message */
+    &hfi_dash_msg_dsq,
+    &hfi_msg_dsq_denom,
+    &hfi_msg_dsq_vin_prev_outp_hash,
+    &hfi_msg_dsq_vin_prev_outp_index,
+    &hfi_msg_dsq_vin_seq,
+    &hfi_msg_dsq_time,
+    &hfi_msg_dsq_ready,
+    &hfi_msg_dsq_vchsig,
+
+    /* dsa message */
+    &hfi_dash_msg_dsa,
+
+    /* dsi message */
+    &hfi_dash_msg_dsi,
+
+    /* dss message */
+    &hfi_dash_msg_dss,
+
+    /* ix message */
+    &hfi_dash_msg_ix,
+
+    /* txlvote message */
+    &hfi_dash_msg_txlvote,
+
+    /* govobj message */
+    &hfi_dash_msg_govobj,
+
+    /* govobjvote message */
+    &hfi_dash_msg_govobjvote,
+
 
     /* spork message */
     &hfi_dash_msg_spork,
@@ -2320,14 +2538,34 @@ proto_reg_handoff_dash(void)
   dissector_add_string("dash.command", "merkleblock", command_handle);
 
   /* Dash specific commands */
-  command_handle = create_dissector_handle( dissect_dash_msg_dsq, hfi_dash->id );
-  dissector_add_string("dash.command", "dsq", command_handle);
   command_handle = create_dissector_handle( dissect_dash_msg_mnb, hfi_dash->id );
   dissector_add_string("dash.command", "mnb", command_handle);
   command_handle = create_dissector_handle( dissect_dash_msg_mnp, hfi_dash->id );
   dissector_add_string("dash.command", "mnp", command_handle);
   command_handle = create_dissector_handle( dissect_dash_msg_mnw, hfi_dash->id );
   dissector_add_string("dash.command", "mnw", command_handle);
+
+  command_handle = create_dissector_handle( dissect_dash_msg_dstx, hfi_dash->id );
+  dissector_add_string("dash.command", "dstx", command_handle);
+  command_handle = create_dissector_handle( dissect_dash_msg_dssu, hfi_dash->id );
+  dissector_add_string("dash.command", "dssu", command_handle);
+  command_handle = create_dissector_handle( dissect_dash_msg_dsq, hfi_dash->id );
+  dissector_add_string("dash.command", "dsq", command_handle);
+  command_handle = create_dissector_handle( dissect_dash_msg_dsa, hfi_dash->id );
+  dissector_add_string("dash.command", "dsa", command_handle);
+  command_handle = create_dissector_handle( dissect_dash_msg_dsi, hfi_dash->id );
+  dissector_add_string("dash.command", "dsi", command_handle);
+  command_handle = create_dissector_handle( dissect_dash_msg_dss, hfi_dash->id );
+  dissector_add_string("dash.command", "dss", command_handle);
+  command_handle = create_dissector_handle( dissect_dash_msg_ix, hfi_dash->id );
+  dissector_add_string("dash.command", "ix", command_handle);
+  command_handle = create_dissector_handle( dissect_dash_msg_txlvote, hfi_dash->id );
+  dissector_add_string("dash.command", "txlvote", command_handle);
+  command_handle = create_dissector_handle( dissect_dash_msg_govobj, hfi_dash->id );
+  dissector_add_string("dash.command", "govobj", command_handle);
+  command_handle = create_dissector_handle( dissect_dash_msg_govobjvote, hfi_dash->id );
+  dissector_add_string("dash.command", "govobjvote", command_handle);
+
   command_handle = create_dissector_handle( dissect_dash_msg_spork, hfi_dash->id );
   dissector_add_string("dash.command", "spork", command_handle);
   command_handle = create_dissector_handle( dissect_dash_msg_dseg, hfi_dash->id );
