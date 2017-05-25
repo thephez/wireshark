@@ -660,6 +660,18 @@ static header_field_info hfi_msg_mnp_vchsig DASH_HFI_INIT =
 static header_field_info hfi_dash_msg_mnw DASH_HFI_INIT =
   { "Masternode Payment Vote message", "dash.mnw", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
+/* mnwb - Masternode Payment Block
+
+*/
+static header_field_info hfi_dash_msg_mnwb DASH_HFI_INIT =
+  { "Masternode Payment Block message", "dash.mnwb", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
+/* mnv - Masternode Verify
+
+*/
+static header_field_info hfi_dash_msg_mnv DASH_HFI_INIT =
+  { "Masternode Verify message", "dash.mnv", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
 /* dstx - Darksend Broadcast
 	Masternodes can broadcast subsidised transactions without fees for the sake of security in mixing. This is done via the DSTX message.
 */
@@ -716,6 +728,18 @@ static header_field_info hfi_dash_msg_dsa DASH_HFI_INIT =
 static header_field_info hfi_dash_msg_dsi DASH_HFI_INIT =
   { "Darksend Entry message", "dash.dsi", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
+/* dsf - Darksend Final Transaction
+	
+*/
+static header_field_info hfi_dash_msg_dsf DASH_HFI_INIT =
+  { "Darksend Final Tx message", "dash.dsf", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
+/* dsc - Darksend Complete
+	
+*/
+static header_field_info hfi_dash_msg_dsc DASH_HFI_INIT =
+  { "Darksend Complete message", "dash.dsc", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
 /* dss - Darksend Sign Final Transaction
 	User's signed inputs for a group transaction in a mixing session
 */
@@ -744,7 +768,13 @@ static header_field_info hfi_dash_msg_govobj DASH_HFI_INIT =
 	Masternodes use governance voting in response to new proposals, contracts, settings or finalized budgets.
 */
 static header_field_info hfi_dash_msg_govobjvote DASH_HFI_INIT =
-  { "Governance Vote message", "dash.govobjvote", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
+  { "Masternode Governance Vote message", "dash.govobjvote", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
+/* govsync - Governance Sync
+	
+*/
+static header_field_info hfi_dash_msg_govsync DASH_HFI_INIT =
+  { "Masternode Governance Sync message", "dash.govsync", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
 
 /* spork - Spork
@@ -759,17 +789,17 @@ static header_field_info hfi_dash_msg_spork DASH_HFI_INIT =
 static header_field_info hfi_dash_msg_dseg DASH_HFI_INIT =
   { "Dseg message", "dash.dseg", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-/* ssc - ???
+/* ssc - Sync Status Count
 	No documentation available
 */
 static header_field_info hfi_dash_msg_ssc DASH_HFI_INIT =
-  { "Ssc message", "dash.ssc", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
+  { "Sync Status Count message", "dash.ssc", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
-/* mnget - ???
+/* mnget - Masternode Payment Sync
 	No documentation available
 */
 static header_field_info hfi_dash_msg_mnget DASH_HFI_INIT =
-  { "Mnget message", "dash.mnget", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
+  { "Masternode Payment Sync message", "dash.mnget", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
 static gint ett_dash = -1;
 static gint ett_dash_msg = -1;
@@ -1942,6 +1972,37 @@ dissect_dash_msg_mnw(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, vo
 }
 
 /**
+ * Handler for mnwb messages
+ */
+static int
+dissect_dash_msg_mnwb(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, void *data _U_)
+{
+  proto_item *ti;
+  guint32     offset = 0;
+  //gint        count_length;
+
+  ti   = proto_tree_add_item(tree, &hfi_dash_msg_mnwb, tvb, offset, -1, ENC_NA);
+  tree = proto_item_add_subtree(ti, ett_dash_msg);
+
+  return offset;
+}
+
+/**
+ * Handler for mnv messages
+ */
+static int
+dissect_dash_msg_mnv(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, void *data _U_)
+{
+  proto_item *ti;
+  guint32     offset = 0;
+
+  ti   = proto_tree_add_item(tree, &hfi_dash_msg_mnv, tvb, offset, -1, ENC_NA);
+  tree = proto_item_add_subtree(ti, ett_dash_msg);
+
+  return offset;
+}
+
+/**
  * Handler for dstx messages
  */
 static int
@@ -2002,6 +2063,21 @@ dissect_dash_msg_dsi(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, vo
 }
 
 /**
+ * Handler for dsf messages
+ */
+static int
+dissect_dash_msg_dsf(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, void *data _U_)
+{
+  proto_item *ti;
+  guint32     offset = 0;
+
+  ti   = proto_tree_add_item(tree, &hfi_dash_msg_dsf, tvb, offset, -1, ENC_NA);
+  tree = proto_item_add_subtree(ti, ett_dash_msg);
+
+  return offset;
+}
+
+/**
  * Handler for dss messages
  */
 static int
@@ -2011,6 +2087,21 @@ dissect_dash_msg_dss(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, vo
   guint32     offset = 0;
 
   ti   = proto_tree_add_item(tree, &hfi_dash_msg_dss, tvb, offset, -1, ENC_NA);
+  tree = proto_item_add_subtree(ti, ett_dash_msg);
+
+  return offset;
+}
+
+/**
+ * Handler for dsc messages
+ */
+static int
+dissect_dash_msg_dsc(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, void *data _U_)
+{
+  proto_item *ti;
+  guint32     offset = 0;
+
+  ti   = proto_tree_add_item(tree, &hfi_dash_msg_dsc, tvb, offset, -1, ENC_NA);
   tree = proto_item_add_subtree(ti, ett_dash_msg);
 
   return offset;
@@ -2071,6 +2162,21 @@ dissect_dash_msg_govobjvote(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *t
   guint32     offset = 0;
 
   ti   = proto_tree_add_item(tree, &hfi_dash_msg_govobjvote, tvb, offset, -1, ENC_NA);
+  tree = proto_item_add_subtree(ti, ett_dash_msg);
+
+  return offset;
+}
+
+/**
+ * Handler for govsync messages
+ */
+static int
+dissect_dash_msg_govsync(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, void *data _U_)
+{
+  proto_item *ti;
+  guint32     offset = 0;
+
+  ti   = proto_tree_add_item(tree, &hfi_dash_msg_govsync, tvb, offset, -1, ENC_NA);
   tree = proto_item_add_subtree(ti, ett_dash_msg);
 
   return offset;
@@ -2394,6 +2500,12 @@ proto_register_dash(void)
     /* mnw message */
     &hfi_dash_msg_mnw,
 
+    /* mnwb message */
+    &hfi_dash_msg_mnwb,
+
+    /* mnv message */
+    &hfi_dash_msg_mnv,
+
     /* dstx message */
     &hfi_dash_msg_dstx,
 
@@ -2416,8 +2528,14 @@ proto_register_dash(void)
     /* dsi message */
     &hfi_dash_msg_dsi,
 
+    /* dsf message */
+    &hfi_dash_msg_dsf,
+
     /* dss message */
     &hfi_dash_msg_dss,
+
+    /* dsc message */
+    &hfi_dash_msg_dsc,
 
     /* ix message */
     &hfi_dash_msg_ix,
@@ -2430,6 +2548,9 @@ proto_register_dash(void)
 
     /* govobjvote message */
     &hfi_dash_msg_govobjvote,
+
+    /* govsync message */
+    &hfi_dash_msg_govsync,
 
 
     /* spork message */
@@ -2544,6 +2665,10 @@ proto_reg_handoff_dash(void)
   dissector_add_string("dash.command", "mnp", command_handle);
   command_handle = create_dissector_handle( dissect_dash_msg_mnw, hfi_dash->id );
   dissector_add_string("dash.command", "mnw", command_handle);
+  command_handle = create_dissector_handle( dissect_dash_msg_mnwb, hfi_dash->id );
+  dissector_add_string("dash.command", "mnwb", command_handle);
+  command_handle = create_dissector_handle( dissect_dash_msg_mnv, hfi_dash->id );
+  dissector_add_string("dash.command", "mnv", command_handle);
 
   command_handle = create_dissector_handle( dissect_dash_msg_dstx, hfi_dash->id );
   dissector_add_string("dash.command", "dstx", command_handle);
@@ -2555,8 +2680,12 @@ proto_reg_handoff_dash(void)
   dissector_add_string("dash.command", "dsa", command_handle);
   command_handle = create_dissector_handle( dissect_dash_msg_dsi, hfi_dash->id );
   dissector_add_string("dash.command", "dsi", command_handle);
+  command_handle = create_dissector_handle( dissect_dash_msg_dsf, hfi_dash->id );
+  dissector_add_string("dash.command", "dsf", command_handle);
   command_handle = create_dissector_handle( dissect_dash_msg_dss, hfi_dash->id );
   dissector_add_string("dash.command", "dss", command_handle);
+  command_handle = create_dissector_handle( dissect_dash_msg_dsc, hfi_dash->id );
+  dissector_add_string("dash.command", "dsc", command_handle);
   command_handle = create_dissector_handle( dissect_dash_msg_ix, hfi_dash->id );
   dissector_add_string("dash.command", "ix", command_handle);
   command_handle = create_dissector_handle( dissect_dash_msg_txlvote, hfi_dash->id );
@@ -2565,6 +2694,8 @@ proto_reg_handoff_dash(void)
   dissector_add_string("dash.command", "govobj", command_handle);
   command_handle = create_dissector_handle( dissect_dash_msg_govobjvote, hfi_dash->id );
   dissector_add_string("dash.command", "govobjvote", command_handle);
+  command_handle = create_dissector_handle( dissect_dash_msg_govsync, hfi_dash->id );
+  dissector_add_string("dash.command", "govsync", command_handle);
 
   command_handle = create_dissector_handle( dissect_dash_msg_spork, hfi_dash->id );
   dissector_add_string("dash.command", "spork", command_handle);
