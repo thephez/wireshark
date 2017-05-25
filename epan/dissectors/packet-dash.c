@@ -609,7 +609,14 @@ static header_field_info hfi_data_varint_count32 DASH_HFI_INIT =
 static header_field_info hfi_data_varint_count64 DASH_HFI_INIT =
   { "Count", "dash.data.count64", FT_UINT64, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
-/* dsq message */
+/* dsq message - Darksend Queue 
+	Field Size 	Field Name 	Data type 	Description
+	4 			nDenom 		int 		Which denomination is allowed in this mixing session
+	41 			vin 		CTxIn 		Unspent output from masternode which is hosting this session
+	4 			nTime 		int 		The time this DSQ was created
+	4 			fReady 		int 		If the mixing pool is ready to be executed
+	71-73 		vchSig 		char[] 		Signature of this message by masternode (verifiable via pubKeyMasternode)
+*/
 static header_field_info hfi_dash_msg_dsq DASH_HFI_INIT =
   { "Darksend Queue message", "dash.dsq", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
@@ -633,6 +640,82 @@ static header_field_info hfi_msg_dsq_ready DASH_HFI_INIT =
 
 static header_field_info hfi_msg_dsq_vchsig DASH_HFI_INIT =
   { "Masternode Signature", "dash.dsq.vchsig", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
+/* mnb - Masternode Broadcast
+	Whenever a masternode comes online or a client is syncing, 
+	they will send this message which describes the masternode entry and how to validate messages from it.
+
+	Field Size 	Field Name 					Data type 			Description
+	41 			vin 						CTxIn 				The unspent output which is holding 1000 DASH
+	# 			addr 						CService 			Address of the main 1000 DASH unspent output
+	33-65 		pubKeyCollateralAddress 	CPubKey 			CPubKey of the main 1000 DASH unspent output
+	33-65 		pubKeyMasternode 			CPubKey 			CPubKey of the secondary signing key (For all other messaging other than announce message)
+	71-73 		sig 						char[] 				Signature of this message
+	8 			sigTime 					int64_t 			Time which the signature was created
+	4 			nProtocolVersion 			int 				The protocol version of the masternode
+	# 			lastPing 					CMasternodePing 	The last known ping of the masternode
+	8 			nLastDsq 					int64_t 			The last time the masternode sent a DSQ message (for mixing) (DEPRECATED)
+*/
+static header_field_info hfi_dash_msg_mnb DASH_HFI_INIT =
+  { "Masternode Broadcast message", "dash.mnb", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
+/* mnp - Masternode Ping
+	Field Size 	Field Name 	Data type 	Description
+	-----------------------------------------------
+	41 			vin 		CTxIn 		The unspent output of the masternode which is signing the message
+	32 			blockHash 	uint256 	Current chaintip blockhash minus 12
+	8 			sigTime 	int64_t 	Signature time for this ping
+	71-73 		vchSig 		char[] 		Signature of this message by masternode (verifiable via pubKeyMasternode)
+*/
+static header_field_info hfi_dash_msg_mnp DASH_HFI_INIT =
+  { "Masternode Ping message", "dash.mnp", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
+static header_field_info hfi_msg_mnp_blockhash DASH_HFI_INIT =
+  { "Chaintip block hash", "dash.mnp.blockhash", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
+static header_field_info hfi_msg_mnp_sigtime DASH_HFI_INIT =
+  { "Signature timestamp", "dash.mnp.sigtime", FT_ABSOLUTE_TIME, ABSOLUTE_TIME_LOCAL, NULL, 0x0, NULL, HFILL };
+
+static header_field_info hfi_msg_mnp_vchsig DASH_HFI_INIT =
+  { "Masternode Signature", "dash.mnp.vchsig", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
+/* mnw - Masternode Payment Vote
+	When a new block is found on the network, a masternode quorum will be determined and 
+	those 10 selected masternodes will issue a masternode payment vote message to pick the next winning node.
+
+	Field Size 	Field Name 		Data type 	Description
+	41 			vinMasternode 	CTxIn 		The unspent output of the masternode which is signing the message
+	4 			nBlockHeight 	int 		The blockheight which the payee should be paid
+	? 			payeeAddress 	CScript 	The address to pay to
+	71-73 		sig 			char[] 		Signature of the masternode which is signing the message
+*/
+static header_field_info hfi_dash_msg_mnw DASH_HFI_INIT =
+  { "Masternode Payment Vote message", "dash.mnw", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
+
+/* spork - Spork
+	No documentation available
+*/
+static header_field_info hfi_dash_msg_spork DASH_HFI_INIT =
+  { "Spork message", "dash.spork", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
+/* dseg - ???
+	No documentation available
+*/
+static header_field_info hfi_dash_msg_dseg DASH_HFI_INIT =
+  { "Dseg message", "dash.dseg", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
+/* ssc - ???
+	No documentation available
+*/
+static header_field_info hfi_dash_msg_ssc DASH_HFI_INIT =
+  { "Ssc message", "dash.ssc", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
+
+/* mnget - ???
+	No documentation available
+*/
+static header_field_info hfi_dash_msg_mnget DASH_HFI_INIT =
+  { "Mnget message", "dash.mnget", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
 static gint ett_dash = -1;
 static gint ett_dash_msg = -1;
@@ -1702,6 +1785,169 @@ dissect_dash_msg_dsq(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, vo
   return offset;
 }
 
+/**
+ * Handler for mnp messages
+ */
+static int
+dissect_dash_msg_mnp(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, void *data _U_)
+{
+  proto_item *ti;
+  guint32     offset = 0;
+  gint        count_length;
+
+  ti   = proto_tree_add_item(tree, &hfi_dash_msg_mnp, tvb, offset, -1, ENC_NA);
+  tree = proto_item_add_subtree(ti, ett_dash_msg);
+
+  // vin (CTxIn) [41]
+  proto_tree *subtree;
+  proto_tree *prevtree;
+  proto_item *pti;
+  guint64     script_length;
+  guint32     scr_len_offset;
+
+  scr_len_offset = offset+36;
+  get_varint(tvb, scr_len_offset, &count_length, &script_length);
+
+  /* A funny script_length won't cause an exception since the field type is FT_NONE */
+  ti = proto_tree_add_item(tree, &hfi_msg_tx_in, tvb, offset,
+      36 + count_length + (guint)script_length + 4, ENC_NA);
+  subtree = proto_item_add_subtree(ti, ett_tx_in_list);
+
+  /* previous output */
+  pti = proto_tree_add_item(subtree, &hfi_msg_tx_in_prev_output, tvb, offset, 36, ENC_NA);
+  prevtree = proto_item_add_subtree(pti, ett_tx_in_outp);
+
+  proto_tree_add_item(prevtree, &hfi_msg_tx_in_prev_outp_hash, tvb, offset, 32, ENC_NA);
+  offset += 32;
+
+  proto_tree_add_item(prevtree, &hfi_msg_tx_in_prev_outp_index, tvb, offset, 4, ENC_LITTLE_ENDIAN);
+  offset += 4;
+  /* end previous output */
+
+  add_varint_item(subtree, tvb, offset, count_length, &hfi_msg_tx_in_script8, &hfi_msg_tx_in_script16,
+                  &hfi_msg_tx_in_script32, &hfi_msg_tx_in_script64);
+
+  offset += count_length;
+
+  if ((offset + script_length) > G_MAXINT) {
+    proto_tree_add_expert(tree, pinfo, &ei_dash_script_len,
+        tvb, scr_len_offset, count_length);
+    return G_MAXINT;
+  }
+
+  proto_tree_add_item(subtree, &hfi_msg_tx_in_sig_script, tvb, offset, (guint)script_length, ENC_NA);
+  offset += (guint)script_length;
+
+  proto_tree_add_item(subtree, &hfi_msg_tx_in_seq, tvb, offset, 4, ENC_LITTLE_ENDIAN);
+  offset += 4;
+
+  // Block Hash - Current chaintip blockhash minus 12
+  proto_tree_add_item(tree, &hfi_msg_mnp_blockhash, tvb, offset, 32, ENC_NA);
+  offset += 32;
+
+  // sigTime - Signature time for this ping
+  proto_tree_add_item(tree, &hfi_msg_mnp_sigtime, tvb, offset, 8, ENC_LITTLE_ENDIAN);
+  offset += 8;
+
+  // vchSig - Signature of this message by masternode (verifiable via pubKeyMasternode)
+  proto_tree_add_item(tree, &hfi_msg_mnp_vchsig, tvb, offset, 66, ENC_NA);  // Should be 71-73 chars per documentation, but always seems to be 66
+
+  return offset;
+}
+
+/**
+ * Handler for mnb messages
+ */
+static int
+dissect_dash_msg_mnb(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, void *data _U_)
+{
+  proto_item *ti;
+  guint32     offset = 0;
+  //gint        count_length;
+
+  ti   = proto_tree_add_item(tree, &hfi_dash_msg_mnb, tvb, offset, -1, ENC_NA);
+  tree = proto_item_add_subtree(ti, ett_dash_msg);
+
+  return offset;
+}
+
+/**
+ * Handler for mnw messages
+ */
+static int
+dissect_dash_msg_mnw(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, void *data _U_)
+{
+  proto_item *ti;
+  guint32     offset = 0;
+  //gint        count_length;
+
+  ti   = proto_tree_add_item(tree, &hfi_dash_msg_mnw, tvb, offset, -1, ENC_NA);
+  tree = proto_item_add_subtree(ti, ett_dash_msg);
+
+  return offset;
+}
+
+/**
+ * Handler for spork messages
+ */
+static int
+dissect_dash_msg_spork(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, void *data _U_)
+{
+  proto_item *ti;
+  guint32     offset = 0;
+
+  ti   = proto_tree_add_item(tree, &hfi_dash_msg_spork, tvb, offset, -1, ENC_NA);
+  tree = proto_item_add_subtree(ti, ett_dash_msg);
+
+  return offset;
+}
+
+/**
+ * Handler for dseg messages
+ */
+static int
+dissect_dash_msg_dseg(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, void *data _U_)
+{
+  proto_item *ti;
+  guint32     offset = 0;
+
+  ti   = proto_tree_add_item(tree, &hfi_dash_msg_dseg, tvb, offset, -1, ENC_NA);
+  tree = proto_item_add_subtree(ti, ett_dash_msg);
+
+  return offset;
+}
+
+/**
+ * Handler for ssc messages
+ */
+static int
+dissect_dash_msg_ssc(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, void *data _U_)
+{
+  proto_item *ti;
+  guint32     offset = 0;
+
+  ti   = proto_tree_add_item(tree, &hfi_dash_msg_ssc, tvb, offset, -1, ENC_NA);
+  tree = proto_item_add_subtree(ti, ett_dash_msg);
+
+  return offset;
+}
+
+/**
+ * Handler for mnget messages
+ */
+static int
+dissect_dash_msg_mnget(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, void *data _U_)
+{
+  proto_item *ti;
+  guint32     offset = 0;
+
+  ti   = proto_tree_add_item(tree, &hfi_dash_msg_mnget, tvb, offset, -1, ENC_NA);
+  tree = proto_item_add_subtree(ti, ett_dash_msg);
+
+  return offset;
+}
+
+
 static int
 dissect_dash(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data)
 {
@@ -1955,6 +2201,30 @@ proto_register_dash(void)
     &hfi_msg_dsq_time,
     &hfi_msg_dsq_ready,
     &hfi_msg_dsq_vchsig,
+
+    /* mnp message */
+    &hfi_dash_msg_mnp,
+    &hfi_msg_mnp_blockhash,
+    &hfi_msg_mnp_sigtime,
+    &hfi_msg_mnp_vchsig,
+
+    /* mnb message */
+    &hfi_dash_msg_mnb,
+
+    /* mnw message */
+    &hfi_dash_msg_mnw,
+
+    /* spork message */
+    &hfi_dash_msg_spork,
+
+    /* dseg message */
+    &hfi_dash_msg_dseg,
+
+    /* ssc message */
+    &hfi_dash_msg_ssc,
+
+    /* mnget message */
+    &hfi_dash_msg_mnget,
   };
 #endif
 
@@ -2052,6 +2322,20 @@ proto_reg_handoff_dash(void)
   /* Dash specific commands */
   command_handle = create_dissector_handle( dissect_dash_msg_dsq, hfi_dash->id );
   dissector_add_string("dash.command", "dsq", command_handle);
+  command_handle = create_dissector_handle( dissect_dash_msg_mnb, hfi_dash->id );
+  dissector_add_string("dash.command", "mnb", command_handle);
+  command_handle = create_dissector_handle( dissect_dash_msg_mnp, hfi_dash->id );
+  dissector_add_string("dash.command", "mnp", command_handle);
+  command_handle = create_dissector_handle( dissect_dash_msg_mnw, hfi_dash->id );
+  dissector_add_string("dash.command", "mnw", command_handle);
+  command_handle = create_dissector_handle( dissect_dash_msg_spork, hfi_dash->id );
+  dissector_add_string("dash.command", "spork", command_handle);
+  command_handle = create_dissector_handle( dissect_dash_msg_dseg, hfi_dash->id );
+  dissector_add_string("dash.command", "dseg", command_handle);
+  command_handle = create_dissector_handle( dissect_dash_msg_ssc, hfi_dash->id );
+  dissector_add_string("dash.command", "ssc", command_handle);
+  command_handle = create_dissector_handle( dissect_dash_msg_mnget, hfi_dash->id );
+  dissector_add_string("dash.command", "mnget", command_handle);
 
   /* messages with no payload */
   command_handle = create_dissector_handle( dissect_dash_msg_empty, hfi_dash->id );
@@ -2060,6 +2344,7 @@ proto_reg_handoff_dash(void)
   dissector_add_string("dash.command", "mempool", command_handle);
   dissector_add_string("dash.command", "filterclear", command_handle);
   dissector_add_string("dash.command", "sendheaders", command_handle);
+  dissector_add_string("dash.command", "getsporks", command_handle);
 
   /* messages not implemented */
   /* command_handle = create_dissector_handle( dissect_dash_msg_empty, hfi_dash->id ); */
