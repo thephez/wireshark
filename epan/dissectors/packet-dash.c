@@ -20,6 +20,8 @@
  *     -> merkleblock
  *     -> headers
  *
+ * Converted from bitcoin -> dash 2017
+ *
  * Wireshark - Network traffic analyzer
  * By Gerald Combs <gerald@wireshark.org>
  * Copyright 1998 Gerald Combs
@@ -612,7 +614,7 @@ static header_field_info hfi_dash_msg_dsq DASH_HFI_INIT =
   { "Darksend Queue message", "dash.dsq", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
 static header_field_info hfi_msg_dsq_denom DASH_HFI_INIT =
-  { "Denomination", "dash.dsq.denom", FT_UINT32, BASE_HEX, NULL, 0x0, NULL, HFILL };
+  { "Denomination", "dash.dsq.denom", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
 static header_field_info hfi_msg_dsq_vin_prev_outp_hash DASH_HFI_INIT =
   { "Hash", "dash.dsq.vin.prev_output.hash", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
@@ -624,11 +626,13 @@ static header_field_info hfi_msg_dsq_vin_seq DASH_HFI_INIT =
   { "Sequence", "dash.dsq.vin.seq", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
 static header_field_info hfi_msg_dsq_time DASH_HFI_INIT =
-  { "Time", "dash.dsq.time", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
+  { "Create Time", "dash.dsq.time", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
 static header_field_info hfi_msg_dsq_ready DASH_HFI_INIT =
   { "Ready", "dash.dsq.ready", FT_UINT32, BASE_DEC, NULL, 0x0, NULL, HFILL };
 
+static header_field_info hfi_msg_dsq_vchsig DASH_HFI_INIT =
+  { "Masternode Signature", "dash.dsq.vchsig", FT_BYTES, BASE_NONE, NULL, 0x0, NULL, HFILL };
 
 static gint ett_dash = -1;
 static gint ett_dash_msg = -1;
@@ -1625,49 +1629,75 @@ static int
 dissect_dash_msg_dsq(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, void *data _U_)
 {
   proto_item *ti;
-  gint        script_length;
-  guint64     in_count;
   guint32     offset = 0;
+  gint        count_length;
 
   ti   = proto_tree_add_item(tree, &hfi_dash_msg_dsq, tvb, offset, -1, ENC_NA);
   tree = proto_item_add_subtree(ti, ett_dash_msg);
 
-  // Denomination - Which denomination is allowed in this mixing session
+  /*
+  Denomination - Which denomination is allowed in this mixing session
+  1 = 100   Dash
+  2 =  10   Dash
+  4 =   1   Dash
+  8 =   0.1 Dash
+  */
   proto_tree_add_item(tree, &hfi_msg_dsq_denom, tvb, offset, 4, ENC_LITTLE_ENDIAN);
   offset += 4;
 
   // vin (CTxIn) [41]
-  // Prevout (Hash) - this is currently incorrect endian format
-  proto_tree_add_item(tree, &hfi_msg_dsq_vin_prev_outp_hash, tvb, offset, 32, ENC_NA);
+  proto_tree *subtree;
+  proto_tree *prevtree;
+  proto_item *pti;
+  guint64     script_length;
+  guint32     scr_len_offset;
+
+  scr_len_offset = offset+36;
+  get_varint(tvb, scr_len_offset, &count_length, &script_length);
+
+  /* A funny script_length won't cause an exception since the field type is FT_NONE */
+  ti = proto_tree_add_item(tree, &hfi_msg_tx_in, tvb, offset,
+      36 + count_length + (guint)script_length + 4, ENC_NA);
+  subtree = proto_item_add_subtree(ti, ett_tx_in_list);
+
+  /* previous output */
+  pti = proto_tree_add_item(subtree, &hfi_msg_tx_in_prev_output, tvb, offset, 36, ENC_NA);
+  prevtree = proto_item_add_subtree(pti, ett_tx_in_outp);
+
+  proto_tree_add_item(prevtree, &hfi_msg_tx_in_prev_outp_hash, tvb, offset, 32, ENC_NA);
   offset += 32;
 
-  // Prevout (index)
-  proto_tree_add_item(tree, &hfi_msg_dsq_vin_prev_outp_index, tvb, offset, 4, ENC_NA);
+  proto_tree_add_item(prevtree, &hfi_msg_tx_in_prev_outp_index, tvb, offset, 4, ENC_LITTLE_ENDIAN);
   offset += 4;
+  /* end previous output */
 
-  // Script length
-  get_varint(tvb, offset, &script_length, &in_count);
-  add_varint_item(tree, tvb, offset, script_length, &hfi_msg_tx_in_script8, &hfi_msg_tx_in_script16,
-	                &hfi_msg_tx_in_script32, &hfi_msg_tx_in_script64);
+  add_varint_item(subtree, tvb, offset, count_length, &hfi_msg_tx_in_script8, &hfi_msg_tx_in_script16,
+                  &hfi_msg_tx_in_script32, &hfi_msg_tx_in_script64);
 
-  offset += script_length;
+  offset += count_length;
 
-  //if (script_length > 0)
-  //{
-  //  Get script
-  //}
+  if ((offset + script_length) > G_MAXINT) {
+    proto_tree_add_expert(tree, pinfo, &ei_dash_script_len,
+        tvb, scr_len_offset, count_length);
+    return G_MAXINT;
+  }
 
-  proto_tree_add_item(tree, &hfi_msg_dsq_vin_seq, tvb, offset, 4, ENC_NA);
+  proto_tree_add_item(subtree, &hfi_msg_tx_in_sig_script, tvb, offset, (guint)script_length, ENC_NA);
+  offset += (guint)script_length;
+
+  proto_tree_add_item(subtree, &hfi_msg_tx_in_seq, tvb, offset, 4, ENC_LITTLE_ENDIAN);
   offset += 4;
 
   // Time - the time this DSQ was created
-  proto_tree_add_item(tree, &hfi_msg_dsq_time, tvb, offset, 4, ENC_NA);
+  proto_tree_add_item(tree, &hfi_msg_dsq_time, tvb, offset, 4, ENC_LITTLE_ENDIAN);
   offset += 4;
 
   // Ready - if the mixing pool is ready to be executed
   proto_tree_add_item(tree, &hfi_msg_dsq_ready, tvb, offset, 4, ENC_NA);
+  offset += 4;
 
-    // vchSig - Signature of this message by masternode (verifiable via pubKeyMasternode)
+  // vchSig - Signature of this message by masternode (verifiable via pubKeyMasternode)
+  proto_tree_add_item(tree, &hfi_msg_dsq_vchsig, tvb, offset, 67, ENC_NA);  // Should be 71-73 chars per documentation, but always seems to be 67
 
   return offset;
 }
@@ -1924,7 +1954,7 @@ proto_register_dash(void)
     &hfi_msg_dsq_vin_seq,
     &hfi_msg_dsq_time,
     &hfi_msg_dsq_ready,
-//    &hfi_msg_dsq_vchsig,
+    &hfi_msg_dsq_vchsig,
   };
 #endif
 
