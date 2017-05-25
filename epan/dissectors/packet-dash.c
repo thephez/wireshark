@@ -611,10 +611,10 @@ static header_field_info hfi_data_varint_count64 DASH_HFI_INIT =
 
 /* dsq message - Darksend Queue 
 	Field Size 	Field Name 	Data type 	Description
-	4 			nDenom 		int 		Which denomination is allowed in this mixing session
-	41 			vin 		CTxIn 		Unspent output from masternode which is hosting this session
-	4 			nTime 		int 		The time this DSQ was created
-	4 			fReady 		int 		If the mixing pool is ready to be executed
+	4 		nDenom 		int 		Which denomination is allowed in this mixing session
+	41 		vin 		CTxIn 		Unspent output from masternode which is hosting this session
+	4 		nTime 		int 		The time this DSQ was created
+	4 		fReady 		int 		If the mixing pool is ready to be executed
 	71-73 		vchSig 		char[] 		Signature of this message by masternode (verifiable via pubKeyMasternode)
 */
 static header_field_info hfi_dash_msg_dsq DASH_HFI_INIT =
@@ -645,16 +645,16 @@ static header_field_info hfi_msg_dsq_vchsig DASH_HFI_INIT =
 	Whenever a masternode comes online or a client is syncing, 
 	they will send this message which describes the masternode entry and how to validate messages from it.
 
-	Field Size 	Field Name 					Data type 			Description
-	41 			vin 						CTxIn 				The unspent output which is holding 1000 DASH
-	# 			addr 						CService 			Address of the main 1000 DASH unspent output
-	33-65 		pubKeyCollateralAddress 	CPubKey 			CPubKey of the main 1000 DASH unspent output
-	33-65 		pubKeyMasternode 			CPubKey 			CPubKey of the secondary signing key (For all other messaging other than announce message)
-	71-73 		sig 						char[] 				Signature of this message
-	8 			sigTime 					int64_t 			Time which the signature was created
-	4 			nProtocolVersion 			int 				The protocol version of the masternode
-	# 			lastPing 					CMasternodePing 	The last known ping of the masternode
-	8 			nLastDsq 					int64_t 			The last time the masternode sent a DSQ message (for mixing) (DEPRECATED)
+	Field Size 	Field Name 			Data type 		Description
+	41 		vin 				CTxIn 			The unspent output which is holding 1000 DASH
+	# 		addr 				CService 		Address of the main 1000 DASH unspent output
+	33-65 		pubKeyCollateralAddress 	CPubKey 		CPubKey of the main 1000 DASH unspent output
+	33-65 		pubKeyMasternode 		CPubKey 		CPubKey of the secondary signing key (For all other messaging other than announce message)
+	71-73 		sig 				char[] 			Signature of this message
+	8 		sigTime 			int64_t 		Time which the signature was created
+	4 		nProtocolVersion 		int 			The protocol version of the masternode
+	# 		lastPing 			CMasternodePing 	The last known ping of the masternode
+	8 		nLastDsq 			int64_t 		The last time the masternode sent a DSQ message (for mixing) (DEPRECATED)
 */
 static header_field_info hfi_dash_msg_mnb DASH_HFI_INIT =
   { "Masternode Broadcast message", "dash.mnb", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
@@ -662,9 +662,9 @@ static header_field_info hfi_dash_msg_mnb DASH_HFI_INIT =
 /* mnp - Masternode Ping
 	Field Size 	Field Name 	Data type 	Description
 	-----------------------------------------------
-	41 			vin 		CTxIn 		The unspent output of the masternode which is signing the message
-	32 			blockHash 	uint256 	Current chaintip blockhash minus 12
-	8 			sigTime 	int64_t 	Signature time for this ping
+	41 		vin 		CTxIn 		The unspent output of the masternode which is signing the message
+	32 		blockHash 	uint256 	Current chaintip blockhash minus 12
+	8 		sigTime 	int64_t 	Signature time for this ping
 	71-73 		vchSig 		char[] 		Signature of this message by masternode (verifiable via pubKeyMasternode)
 */
 static header_field_info hfi_dash_msg_mnp DASH_HFI_INIT =
@@ -683,11 +683,11 @@ static header_field_info hfi_msg_mnp_vchsig DASH_HFI_INIT =
 	When a new block is found on the network, a masternode quorum will be determined and 
 	those 10 selected masternodes will issue a masternode payment vote message to pick the next winning node.
 
-	Field Size 	Field Name 		Data type 	Description
-	41 			vinMasternode 	CTxIn 		The unspent output of the masternode which is signing the message
-	4 			nBlockHeight 	int 		The blockheight which the payee should be paid
-	? 			payeeAddress 	CScript 	The address to pay to
-	71-73 		sig 			char[] 		Signature of the masternode which is signing the message
+	Field Size 	Field Name 	Data type 	Description
+	41 		vinMasternode 	CTxIn 		The unspent output of the masternode which is signing the message
+	4 		nBlockHeight 	int 		The blockheight which the payee should be paid
+	? 		payeeAddress 	CScript 	The address to pay to
+	71-73 		sig 		char[] 		Signature of the masternode which is signing the message
 */
 static header_field_info hfi_dash_msg_mnw DASH_HFI_INIT =
   { "Masternode Payment Vote message", "dash.mnw", FT_NONE, BASE_NONE, NULL, 0x0, NULL, HFILL };
