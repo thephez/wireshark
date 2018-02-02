@@ -1326,8 +1326,6 @@ static void add_varint_item(proto_tree *tree, tvbuff_t *tvb, const gint offset, 
 
 /*
  Change hash endianness
- This should be  done using the bytes (not converting to a string), but all
- attempts at getting that to work have been unsuccesful so far
 */
 static char * change_hash_endianness(tvbuff_t *tvb, guint32 offset, char *bytestring) {
   int cx;
@@ -1353,8 +1351,6 @@ create_coutputpoint_tree(tvbuff_t *tvb, proto_item *ti, header_field_info* hfi, 
 {
   proto_tree *tree;
   tree = proto_item_add_subtree(ti, ett_address);
-
-  //gint        count_length;
 
   /* COutPoint
    *   [32] hash    uint256
@@ -1392,10 +1388,7 @@ create_ctxin_tree(tvbuff_t *tvb, proto_item *ti, guint32 offset)
 
   tree = proto_item_add_subtree(ti, ett_address);
 
-  //proto_item *rti;
   gint        count_length;
-  //guint64     in_count;
-  //guint64     out_count;
 
   /* TxIn
    *   [36]  previous_output    outpoint
@@ -1404,9 +1397,6 @@ create_ctxin_tree(tvbuff_t *tvb, proto_item *ti, guint32 offset)
    *   [ 4]  sequence           uint32_t
    *
    */
-
-  //gint        varint_length;
-  //guint64     varint;
 
   proto_tree *subtree;
   proto_tree *prevtree;
@@ -1420,7 +1410,6 @@ create_ctxin_tree(tvbuff_t *tvb, proto_item *ti, guint32 offset)
   /* A funny script_length won't cause an exception since the field type is FT_NONE */
   ti = proto_tree_add_item(tree, &hfi_msg_tx_in, tvb, offset,
       36 + (guint)script_length + 4, ENC_NA);
-      //36 + count_length + (guint)script_length + 4, ENC_NA);
   subtree = proto_item_add_subtree(ti, ett_tx_in_list);
 
   /* previous output */
@@ -1428,18 +1417,11 @@ create_ctxin_tree(tvbuff_t *tvb, proto_item *ti, guint32 offset)
   prevtree = proto_item_add_subtree(pti, ett_tx_in_outp);
 
   // Correct hash (little endian)
-  //proto_tree_add_debug_text(prevtree, "Debug - Hash: %016lx%016lx%016lx%016lx", tvb_get_letoh64(tvb, offset + 24), tvb_get_letoh64(tvb, offset + 16), tvb_get_letoh64(tvb, offset + 8), tvb_get_letoh64(tvb, offset + 0));
-
   char bytestring[128];
   change_hash_endianness(tvb, offset, bytestring);
 
   proto_tree_add_string(prevtree, &hfi_msg_tx_in_prev_outp_hash_reversed, tvb, offset, 32, bytestring); //tvb_bytes_to_str(wmem_packet_scope(), tvb, offset, 32));
 
-  // Unsuccessful attempts to do using bytes
-  //proto_tree_add_bytes_format(prevtree, 0, tvb, offset, 32, NULL, "Data chunk: %s", tvb_bytes_to_str(wmem_packet_scope(), tvb, offset, 32));
-  //proto_tree_add_bytes(prevtree, &hfi_msg_tx_in_prev_outp_hash, tvb, offset, 32, NULL); //, "Data chunk: %s", tvb_bytes_to_str(wmem_packet_scope(), tvb, offset, 32));
-
-  // Original code
   proto_tree_add_item(prevtree, &hfi_msg_tx_in_prev_outp_hash, tvb, offset, 32, ENC_NA);
   offset += 32;
 
@@ -1451,12 +1433,6 @@ create_ctxin_tree(tvbuff_t *tvb, proto_item *ti, guint32 offset)
                   &hfi_msg_tx_in_script32, &hfi_msg_tx_in_script64);
 
   offset += count_length;
-
-//  if ((offset + script_length) > G_MAXINT) {
-//    proto_tree_add_expert(tree, pinfo, &ei_dash_script_len,
-//        tvb, scr_len_offset, count_length);
-//    return G_MAXINT;
-//  }
 
   proto_tree_add_item(subtree, &hfi_msg_tx_in_sig_script, tvb, offset, (guint)script_length, ENC_NA);
   offset += (guint)script_length;
@@ -2336,7 +2312,7 @@ dissect_dash_msg_merkleblock(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *
                   &hfi_msg_merkleblock_flags_size32, &hfi_msg_merkleblock_flags_size64);
   offset += length;
 
-  /* The cast to guint is save because dash messages are always smaller than 0x02000000 bytes. */
+  /* The cast to guint is safe because dash messages are always smaller than 0x02000000 bytes. */
   proto_tree_add_item(subtree, &hfi_msg_merkleblock_flags_data, tvb, offset, (guint)count, ENC_ASCII|ENC_NA);
   offset += (guint32)count;
 
@@ -2407,10 +2383,10 @@ dissect_dash_msg_dsq(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, vo
 
   /*
   Denomination - Which denomination is allowed in this mixing session
-  1 = 100   Dash
-  2 =  10   Dash
-  4 =   1   Dash
-  8 =   0.1 Dash
+  1 = 10    Dash
+  2 =  1    Dash
+  4 =  0.1  Dash
+  8 =  0.01 Dash
   */
   proto_tree_add_item(tree, &hfi_msg_dsq_denom, tvb, offset, 4, ENC_LITTLE_ENDIAN);
   offset += 4;
@@ -2695,12 +2671,10 @@ dissect_dash_msg_dsi(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, vo
    *
    */
 
-  // This needs to be redone (same logic for CTxIn used multiple places)
   for (; count > 0; count--)
   {
     proto_tree *subtree;
     proto_tree *prevtree;
-    //proto_item *ti;
     proto_item *pti;
     guint64     script_length;
     guint32     scr_len_offset;
@@ -2758,8 +2732,6 @@ dissect_dash_msg_dsi(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, vo
 
   offset += count_length;
 
-
-  // This needs to be redone (same logic for CTxOut used multiple places)
   /*  TxOut
    *    [ 8] value
    *    [1+] script length [var_int]
@@ -2857,7 +2829,6 @@ dissect_dash_msg_dss(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, vo
    *
    */
 
-  // This needs to be redone (same logic for CTxIn used multiple places)
   for (; count > 0; count--)
   {
     proto_tree *subtree;
