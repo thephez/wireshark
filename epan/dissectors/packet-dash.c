@@ -20,7 +20,11 @@
  *     -> merkleblock
  *     -> headers
  *
- * Converted from bitcoin -> dash 2017
+ * Converted from bitcoin -> dash 2017-2018 by thephez (github.com/thephez)
+ * Changes made:
+ *   Extended to include dissectors for all Dash protocol additions
+ *
+ * See https://dash-docs.github.io/en/developer-reference#p2p-network
  *
  * Wireshark - Network traffic analyzer
  * By Gerald Combs <gerald@wireshark.org>
