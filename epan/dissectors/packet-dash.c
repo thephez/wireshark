@@ -525,7 +525,65 @@ static int hf_dash_govvote_outcome;
 static int hf_dash_govvote_signal;
 static int hf_dash_govvote_time;
 static int hf_dash_govvote_sig;
-static int hf_dash_govvote_hash;/* END GENERATED HF_DECL */
+static int hf_dash_govvote_hash;
+static int hf_dash_llmq_inv_hash;
+static int hf_dash_vvec;
+static int hf_dash_vvec_count;
+static int hf_dash_vvec_pubkey;
+static int hf_dash_blsies_ephemeral_pubkey;
+static int hf_dash_blsies_iv_seed;
+static int hf_dash_blsies_blob_count;
+static int hf_dash_blsies_blob;
+static int hf_dash_blsies_object;
+static int hf_dash_blsies_object_count;
+static int hf_dash_blsies_data;
+static int hf_dash_dkg_sig;
+static int hf_dash_qcontrib_contributions;
+static int hf_dash_qcomplaint_bad_members;
+static int hf_dash_qcomplaint_complain_for;
+static int hf_dash_qjustify_count;
+static int hf_dash_qjustify_contribution;
+static int hf_dash_qjustify_index;
+static int hf_dash_qjustify_skey;
+static int hf_dash_qpcommit_valid_members;
+static int hf_dash_qpcommit_quorum_pubkey;
+static int hf_dash_qpcommit_vvec_hash;
+static int hf_dash_qpcommit_quorum_sig;
+static int hf_dash_sig_count;
+static int hf_dash_sig_session_id;
+static int hf_dash_sig_request_id;
+static int hf_dash_sig_msg_hash;
+static int hf_dash_sig_sign_hash;
+static int hf_dash_sig_quorum_member;
+static int hf_dash_sig_share;
+static int hf_dash_sig_recovered;
+static int hf_dash_sig_ann;
+static int hf_dash_sig_inv;
+static int hf_dash_sig_inv_size;
+static int hf_dash_sig_inv_mode;
+static int hf_dash_sig_inv_bits;
+static int hf_dash_sig_inv_offset;
+static int hf_dash_sig_batch;
+static int hf_dash_sig_batch_count;
+static int hf_dash_sig_share_entry;
+static int hf_dash_clsig_height;
+static int hf_dash_clsig_block_hash;
+static int hf_dash_clsig_sig;
+static int hf_dash_clsig_request_id;
+static int hf_dash_isdlock_version;
+static int hf_dash_isdlock_input_count;
+static int hf_dash_isdlock_input;
+static int hf_dash_isdlock_txid;
+static int hf_dash_isdlock_cycle_hash;
+static int hf_dash_isdlock_sig;
+static int hf_dash_isdlock_request_id;
+static int hf_dash_platformban_height;
+static int hf_dash_platformban_sig;
+static int hf_dash_qdata_mask;
+static int hf_dash_qdata_mask_vvec;
+static int hf_dash_qdata_mask_contrib;
+static int hf_dash_qdata_error;
+static int hf_dash_qdata_contributions;/* END GENERATED HF_DECL */
 
 static int ett_dash;
 static int ett_dash_payload;
@@ -555,7 +613,16 @@ static int ett_dash_cmpct_prefilled;
 static int ett_dash_dsa_flags;
 static int ett_dash_coinjoin_collateral;
 static int ett_dash_govsync_filter;
-static int ett_dash_govobj_data;/* END GENERATED ETT_DECL */
+static int ett_dash_govobj_data;
+static int ett_dash_vvec;
+static int ett_dash_blsies;
+static int ett_dash_blsies_object;
+static int ett_dash_qjustify_contribution;
+static int ett_dash_sig_entry;
+static int ett_dash_sig_inv_bits;
+static int ett_dash_sig_batch;
+static int ett_dash_isdlock_input;
+static int ett_dash_qdata_mask;/* END GENERATED ETT_DECL */
 
 static expert_field ei_dash_command_unknown;
 static expert_field ei_dash_checksum_bad;
@@ -567,7 +634,12 @@ static expert_field ei_dash_coinjoin_denom_invalid;
 static expert_field ei_dash_dsa_flags_invalid;
 static expert_field ei_dash_govvote_sig_size;
 static expert_field ei_dash_vector_too_long;
-static expert_field ei_dash_govsync_hash_funcs;/* END GENERATED EI_DECL */
+static expert_field ei_dash_govsync_hash_funcs;
+static expert_field ei_dash_sig_inv_mode;
+static expert_field ei_dash_sig_inv_index;
+static expert_field ei_dash_sig_inv_padding;
+static expert_field ei_dash_qgetdata_error;
+static expert_field ei_dash_sig_inv_size;/* END GENERATED EI_DECL */
 
 static bool dash_desegment = true;
 static bool dash_verify_checksum = true;
@@ -644,6 +716,35 @@ dash_add_compactsize(proto_tree *tree, int hf, tvbuff_t *tvb, int *offset)
   proto_tree_add_uint64(tree, hf, tvb, *offset, len, value);
   *offset += len;
   return value;
+}
+
+/*
+ * Read the Bitcoin "VARINT" encoding (MSB base-128 with the +1 offset per
+ * continuation byte, used e.g. by LLMQ signing session ids and AUTOBITSET
+ * deltas).  Distinct from CompactSize.
+ */
+static uint64_t
+dash_get_varint(tvbuff_t *tvb, int offset, int *len)
+{
+  uint64_t n = 0;
+  int      i = 0;
+
+  for (;;) {
+    uint8_t b = tvb_get_uint8(tvb, offset + i);
+    i++;
+    if (n > (UINT64_MAX >> 7))
+      THROW(ReportedBoundsError);
+    n = (n << 7) | (b & 0x7f);
+    if (b & 0x80) {
+      if (n == UINT64_MAX)
+        THROW(ReportedBoundsError);
+      n++;
+    } else {
+      break;
+    }
+  }
+  *len = i;
+  return n;
 }
 
 /* A length must fit in what is left of the tvb */
@@ -904,7 +1005,6 @@ dash_classify_script(proto_tree *tree, tvbuff_t *tvb, packet_info *pinfo, int of
 {
   unsigned    type = 0;
   proto_item *ti;
-
   if (len == 0) {
     type = 6;
   } else if (len == 25 && tvb_get_uint8(tvb, offset) == 0x76 && tvb_get_uint8(tvb, offset + 1) == 0xa9 &&
@@ -2986,6 +3086,742 @@ dash_register_coinjoin_gov(void)
   dash_add_command("govobjvote",   dissect_dash_msg_govobjvote);
 }
 
+/*
+ * LLMQ messages: DKG (qcontrib, qcomplaint, qjustify, qpcommit, qfcommit),
+ * threshold signing (qsigsesann, qsigsinv, qgetsigs, qbsigs, qsigshare,
+ * qsigrec), ChainLocks (clsig), InstantSend (isdlock), Platform bans
+ * (platformban) and quorum data requests (qgetdata, qdata).
+ *
+ * Source references are to Dash Core v24.0.1 (src/).
+ */
+
+/* AUTOBITSET encoding byte (serialize.h:566-583) */
+static const value_string dash_autobitset_modes[] = {
+  { 0, "Fixed bitset" },
+  { 1, "VarInt index offsets" },
+  { 0, NULL }
+};
+
+/* CQuorumDataRequest::Errors (llmq/quorums.h:83-92) */
+static const value_string dash_qdata_errors[] = {
+  { 0x00, "None" },
+  { 0x01, "Quorum type invalid" },
+  { 0x02, "Quorum block not found" },
+  { 0x03, "Quorum not found" },
+  { 0x04, "Masternode is no member" },
+  { 0x05, "Quorum verification vector missing" },
+  { 0x06, "Encrypted contributions missing" },
+  { 0xff, "Undefined" },
+  { 0, NULL }
+};
+
+/* CQuorumDataRequest data mask bits (llmq/quorums.h:79-82) */
+#define DASH_QDATA_VVEC     0x0001
+#define DASH_QDATA_CONTRIB  0x0002
+
+/* Consensus::MAX_LLMQ_SIZE (llmq/params.h:17) */
+#define DASH_MAX_LLMQ_SIZE  400
+
+/* CDKGJustification::Contribution: u32 index + plaintext CBLSSecretKey */
+#define DASH_QJUSTIFY_CONTRIB_LEN  (4 + DASH_BLS_SKEY_LEN)
+/* CSigShare element (llmq/signing_shares.h:85-88) */
+#define DASH_SIGSHARE_LEN  (1 + DASH_HASH_LEN + 2 + DASH_HASH_LEN + DASH_HASH_LEN + DASH_BLS_SIG_LEN)
+
+/*
+ * Add a generated hash: SHA256d over prefix || tvb[offset, offset+len),
+ * shown reversed (RPC order).  Used for inventory hashes (empty prefix) and
+ * request ids (serialized string prefix).
+ */
+static proto_item *
+dash_llmq_add_hash_of(proto_tree *tree, int hf, tvbuff_t *tvb, packet_info *pinfo,
+                      const uint8_t *prefix, int prefix_len, int offset, int len)
+{
+  uint8_t     first[DASH_HASH_LEN];
+  uint8_t     digest[DASH_HASH_LEN];
+  uint8_t     rev[DASH_HASH_LEN];
+  uint8_t    *buf;
+  proto_item *ti;
+  int         i;
+
+  if (!tvb_bytes_exist(tvb, offset, len))
+    return NULL;
+  buf = (uint8_t *)wmem_alloc(pinfo->pool, (size_t)prefix_len + len);
+  if (prefix_len)
+    memcpy(buf, prefix, prefix_len);
+  tvb_memcpy(tvb, buf + prefix_len, offset, len);
+  gcry_md_hash_buffer(GCRY_MD_SHA256, first, buf, (size_t)prefix_len + len);
+  gcry_md_hash_buffer(GCRY_MD_SHA256, digest, first, DASH_HASH_LEN);
+  for (i = 0; i < DASH_HASH_LEN; i++)
+    rev[i] = digest[DASH_HASH_LEN - 1 - i];
+  ti = proto_tree_add_bytes_with_length(tree, hf, tvb, offset, len, rev, DASH_HASH_LEN);
+  proto_item_set_generated(ti);
+  return ti;
+}
+
+/*
+ * Sign hash = SHA256d(u8 llmqType || quorumHash || id || msgHash)
+ * (llmq/signhash.cpp:14-22).  The four fields are given by their offsets
+ * since they are not contiguous in CSigShare.
+ */
+static void
+dash_llmq_add_sign_hash(proto_tree *tree, tvbuff_t *tvb, int type_off, int qhash_off, int id_off,
+                        int msg_off, int start, int len)
+{
+  uint8_t     buf[1 + 3 * DASH_HASH_LEN];
+  uint8_t     first[DASH_HASH_LEN];
+  uint8_t     digest[DASH_HASH_LEN];
+  uint8_t     rev[DASH_HASH_LEN];
+  proto_item *ti;
+  int         i;
+
+  if (!tree)
+    return;
+  buf[0] = tvb_get_uint8(tvb, type_off);
+  tvb_memcpy(tvb, buf + 1, qhash_off, DASH_HASH_LEN);
+  tvb_memcpy(tvb, buf + 1 + DASH_HASH_LEN, id_off, DASH_HASH_LEN);
+  tvb_memcpy(tvb, buf + 1 + 2 * DASH_HASH_LEN, msg_off, DASH_HASH_LEN);
+  gcry_md_hash_buffer(GCRY_MD_SHA256, first, buf, sizeof(buf));
+  gcry_md_hash_buffer(GCRY_MD_SHA256, digest, first, DASH_HASH_LEN);
+  for (i = 0; i < DASH_HASH_LEN; i++)
+    rev[i] = digest[DASH_HASH_LEN - 1 - i];
+  ti = proto_tree_add_bytes_with_length(tree, hf_dash_sig_sign_hash, tvb, start, len, rev, DASH_HASH_LEN);
+  proto_item_set_generated(ti);
+}
+
+static const char *
+dash_llmq_type_str(uint32_t type)
+{
+  return val_to_str_const(type, dash_llmq_types, "Unknown LLMQ type");
+}
+
+/* vector<CBLSPublicKey> (verification vector) */
+static int
+dissect_dash_vvec(proto_tree *tree, tvbuff_t *tvb, int offset)
+{
+  proto_item *ti;
+  proto_tree *subtree;
+  uint64_t    count, i;
+
+  subtree = dash_subtree(tree, hf_dash_vvec, ett_dash_vvec, tvb, offset, &ti);
+  count = dash_add_compactsize(subtree, hf_dash_vvec_count, tvb, &offset);
+  dash_check_len(tvb, offset, count * DASH_BLS_PUBKEY_LEN);
+  for (i = 0; i < count; i++) {
+    proto_item *pk = dash_add_item(subtree, hf_dash_vvec_pubkey, tvb, &offset, DASH_BLS_PUBKEY_LEN, ENC_NA);
+    proto_item_prepend_text(pk, "[%" PRIu64 "] ", i);
+  }
+  proto_item_append_text(ti, " (%" PRIu64 " public keys)", count);
+  proto_item_set_end(ti, tvb, offset);
+  return offset;
+}
+
+/* CBLSIESMultiRecipientObjects<CBLSSecretKey> (bls/bls_ies.h:62-118):
+ * ephemeralPubKey, ivSeed, vector<vector<u8>> blobs (one per member) */
+static int
+dissect_dash_blsies_multi(proto_tree *tree, int hf, tvbuff_t *tvb, int offset)
+{
+  proto_item *ti;
+  proto_tree *subtree;
+  uint64_t    count, i;
+
+  subtree = dash_subtree(tree, hf, ett_dash_blsies, tvb, offset, &ti);
+  dash_add_item(subtree, hf_dash_blsies_ephemeral_pubkey, tvb, &offset, DASH_BLS_PUBKEY_LEN, ENC_NA);
+  dash_add_item(subtree, hf_dash_blsies_iv_seed, tvb, &offset, DASH_HASH_LEN, ENC_NA);
+  count = dash_add_compactsize(subtree, hf_dash_blsies_blob_count, tvb, &offset);
+  for (i = 0; i < count; i++) {
+    proto_item *bi;
+
+    DASH_LOOP_CHECK(tvb, offset);
+    bi = dash_add_varbytes(subtree, hf_dash_blsies_blob, tvb, &offset);
+    proto_item_append_text(bi, " (member %" PRIu64 ")", i);
+  }
+  proto_item_append_text(ti, " (%" PRIu64 " members)", count);
+  proto_item_set_end(ti, tvb, offset);
+  return offset;
+}
+
+/* CBLSIESEncryptedObject<CBLSSecretKey> (bls/bls_ies.h:16-60) */
+static int
+dissect_dash_blsies_object(proto_tree *tree, tvbuff_t *tvb, int offset, uint64_t idx)
+{
+  proto_item *ti;
+  proto_tree *subtree;
+
+  subtree = dash_subtree(tree, hf_dash_blsies_object, ett_dash_blsies_object, tvb, offset, &ti);
+  proto_item_append_text(ti, " #%" PRIu64, idx);
+  dash_add_item(subtree, hf_dash_blsies_ephemeral_pubkey, tvb, &offset, DASH_BLS_PUBKEY_LEN, ENC_NA);
+  dash_add_item(subtree, hf_dash_blsies_iv_seed, tvb, &offset, DASH_HASH_LEN, ENC_NA);
+  dash_add_varbytes(subtree, hf_dash_blsies_data, tvb, &offset);
+  proto_item_set_end(ti, tvb, offset);
+  return offset;
+}
+
+/* ------------------------------------------------------------------------
+ * DKG messages (llmq/dkgmessages.h).  Common prefix: llmqType, quorumHash,
+ * proTxHash of the sending member.
+ * ------------------------------------------------------------------------ */
+
+static int
+dissect_dash_dkg_prefix(proto_tree *tree, tvbuff_t *tvb, packet_info *pinfo, int offset)
+{
+  uint32_t type;
+
+  type = dash_add_uint(tree, hf_dash_llmq_type, tvb, &offset, 1);
+  dash_add_hash(tree, hf_dash_quorum_hash, tvb, &offset);
+  dash_add_hash(tree, hf_dash_protx_hash, tvb, &offset);
+  col_append_fstr(pinfo->cinfo, COL_INFO, " (%s)", dash_llmq_type_str(type));
+  return offset;
+}
+
+/* The DKG inv hash is SHA256d of the whole received payload (llmq/net_dkg.cpp:626-628) */
+static int
+dash_dkg_finish(proto_tree *tree, tvbuff_t *tvb, packet_info *pinfo, int offset)
+{
+  dash_add_item(tree, hf_dash_dkg_sig, tvb, &offset, DASH_BLS_SIG_LEN, ENC_NA);
+  dash_llmq_add_hash_of(tree, hf_dash_llmq_inv_hash, tvb, pinfo, NULL, 0, 0, offset);
+  return offset;
+}
+
+/* qcontrib: CDKGContribution (dkgmessages.h:20-67) */
+static int
+dissect_dash_msg_qcontrib(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+  int offset = 0;
+
+  offset = dissect_dash_dkg_prefix(tree, tvb, pinfo, offset);
+  offset = dissect_dash_vvec(tree, tvb, offset);
+  offset = dissect_dash_blsies_multi(tree, hf_dash_qcontrib_contributions, tvb, offset);
+  return dash_dkg_finish(tree, tvb, pinfo, offset);
+}
+
+/* qcomplaint: CDKGComplaint (dkgmessages.h:78-111) */
+static int
+dissect_dash_msg_qcomplaint(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+  int offset = 0;
+
+  offset = dissect_dash_dkg_prefix(tree, tvb, pinfo, offset);
+  offset = dissect_dash_bitset(tree, hf_dash_qcomplaint_bad_members, tvb, pinfo, offset);
+  offset = dissect_dash_bitset(tree, hf_dash_qcomplaint_complain_for, tvb, pinfo, offset);
+  return dash_dkg_finish(tree, tvb, pinfo, offset);
+}
+
+/* qjustify: CDKGJustification (dkgmessages.h:113-142) */
+static int
+dissect_dash_msg_qjustify(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+  int      offset = 0;
+  uint64_t count, i;
+
+  offset = dissect_dash_dkg_prefix(tree, tvb, pinfo, offset);
+  count = dash_add_compactsize(tree, hf_dash_qjustify_count, tvb, &offset);
+  dash_check_len(tvb, offset, count * DASH_QJUSTIFY_CONTRIB_LEN);
+  for (i = 0; i < count; i++) {
+    proto_item *ti;
+    proto_tree *subtree;
+    uint32_t    idx;
+
+    ti = proto_tree_add_item(tree, hf_dash_qjustify_contribution, tvb, offset, DASH_QJUSTIFY_CONTRIB_LEN, ENC_NA);
+    subtree = proto_item_add_subtree(ti, ett_dash_qjustify_contribution);
+    idx = dash_add_uint(subtree, hf_dash_qjustify_index, tvb, &offset, 4);
+    dash_add_item(subtree, hf_dash_qjustify_skey, tvb, &offset, DASH_BLS_SKEY_LEN, ENC_NA);
+    proto_item_append_text(ti, " for member %u", idx);
+  }
+  return dash_dkg_finish(tree, tvb, pinfo, offset);
+}
+
+/* qpcommit: CDKGPrematureCommitment (dkgmessages.h:148-191) */
+static int
+dissect_dash_msg_qpcommit(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+  int offset = 0;
+
+  offset = dissect_dash_dkg_prefix(tree, tvb, pinfo, offset);
+  offset = dissect_dash_bitset(tree, hf_dash_qpcommit_valid_members, tvb, pinfo, offset);
+  dash_add_item(tree, hf_dash_qpcommit_quorum_pubkey, tvb, &offset, DASH_BLS_PUBKEY_LEN, ENC_NA);
+  dash_add_hash(tree, hf_dash_qpcommit_vvec_hash, tvb, &offset);
+  dash_add_item(tree, hf_dash_qpcommit_quorum_sig, tvb, &offset, DASH_BLS_SIG_LEN, ENC_NA);
+  return dash_dkg_finish(tree, tvb, pinfo, offset);
+}
+
+/* qfcommit: CFinalCommitment (llmq/commitment.h:45-115); inv hash is
+ * SerializeHash(qc) */
+static int
+dissect_dash_msg_qfcommit(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+  int offset;
+
+  offset = dissect_dash_final_commitment(tree, hf_dash_commitment, tvb, pinfo, 0);
+  col_append_fstr(pinfo->cinfo, COL_INFO, " (%s)", dash_llmq_type_str(tvb_get_uint8(tvb, 2)));
+  dash_llmq_add_hash_of(tree, hf_dash_llmq_inv_hash, tvb, pinfo, NULL, 0, 0, offset);
+  return offset;
+}
+
+/* ------------------------------------------------------------------------
+ * Signing (llmq/signing.h, llmq/signing_shares.h, llmq/net_signing.cpp)
+ * ------------------------------------------------------------------------ */
+
+/* dash_add_compactsize() that also returns the item */
+static uint64_t
+dash_add_compactsize_item(proto_tree *tree, int hf, tvbuff_t *tvb, int *offset, proto_item **ti)
+{
+  int      len;
+  uint64_t value;
+
+  value = dash_get_compactsize(tvb, *offset, &len);
+  *ti = proto_tree_add_uint64(tree, hf, tvb, *offset, len, value);
+  *offset += len;
+  return value;
+}
+
+/* Session id: VARINT(uint32_t) (signing_shares.h:120, 138, 166) */
+static uint32_t
+dash_add_session_id(proto_tree *tree, tvbuff_t *tvb, int *offset)
+{
+  int      len;
+  uint64_t id;
+
+  id = dash_get_varint(tvb, *offset, &len);
+  if (id > UINT32_MAX)
+    THROW(ReportedBoundsError);
+  proto_tree_add_uint(tree, hf_dash_sig_session_id, tvb, *offset, len, (uint32_t)id);
+  *offset += len;
+  return (uint32_t)id;
+}
+
+/* qsigrec: CRecoveredSig (signing.h:74-101), 193 bytes */
+static int
+dissect_dash_msg_qsigrec(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+  int      offset = 0;
+  uint32_t type;
+
+  type = dash_add_uint(tree, hf_dash_llmq_type, tvb, &offset, 1);
+  dash_add_hash(tree, hf_dash_quorum_hash, tvb, &offset);
+  dash_add_hash(tree, hf_dash_sig_request_id, tvb, &offset);
+  dash_add_hash(tree, hf_dash_sig_msg_hash, tvb, &offset);
+  dash_llmq_add_sign_hash(tree, tvb, 0, 1, 33, 65, 0, 97);
+  dash_add_item(tree, hf_dash_sig_recovered, tvb, &offset, DASH_BLS_SIG_LEN, ENC_NA);
+  /* inv hash: SerializeHash(*this) (signing.h:90-93) */
+  dash_llmq_add_hash_of(tree, hf_dash_llmq_inv_hash, tvb, pinfo, NULL, 0, 0, offset);
+  col_append_fstr(pinfo->cinfo, COL_INFO, " (%s, id %s)", dash_llmq_type_str(type),
+                  dash_rhash_str(pinfo->pool, tvb, 33, 4));
+  return offset;
+}
+
+/* qsigsesann: vector<CSigSesAnn> (signing_shares.h:103-126) */
+static int
+dissect_dash_msg_qsigsesann(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+  int      offset = 0;
+  uint64_t count, i;
+
+  count = dash_add_compactsize(tree, hf_dash_sig_count, tvb, &offset);
+  col_append_fstr(pinfo->cinfo, COL_INFO, " (%" PRIu64 ")", count);
+  for (i = 0; i < count; i++) {
+    proto_item *ti;
+    proto_tree *subtree;
+    uint32_t    sid, type;
+    int         start;
+
+    DASH_LOOP_CHECK(tvb, offset);
+    subtree = dash_subtree(tree, hf_dash_sig_ann, ett_dash_sig_entry, tvb, offset, &ti);
+    sid = dash_add_session_id(subtree, tvb, &offset);
+    start = offset;
+    type = dash_add_uint(subtree, hf_dash_llmq_type, tvb, &offset, 1);
+    dash_add_hash(subtree, hf_dash_quorum_hash, tvb, &offset);
+    dash_add_hash(subtree, hf_dash_sig_request_id, tvb, &offset);
+    dash_add_hash(subtree, hf_dash_sig_msg_hash, tvb, &offset);
+    dash_llmq_add_sign_hash(subtree, tvb, start, start + 1, start + 33, start + 65, start, 97);
+    proto_item_append_text(ti, " #%" PRIu64 ": session %u, %s", i, sid, dash_llmq_type_str(type));
+    proto_item_set_end(ti, tvb, offset);
+  }
+  return offset;
+}
+
+/*
+ * AUTOBITSET with a caller-given size (serialize.h:519-583): u8 mode,
+ * then either a FixedBitSet of ceil(size/8) bytes (mode 0) or a list of
+ * VARINT index offsets terminated by 0 (mode 1).  Returns the new offset,
+ * or -1 if the mode byte is invalid (parsing cannot continue).
+ */
+static int
+dissect_dash_autobitset(proto_tree *tree, tvbuff_t *tvb, packet_info *pinfo, int offset, uint64_t size,
+                        unsigned *nset)
+{
+  proto_item    *mi, *ti;
+  proto_tree    *subtree = NULL;
+  wmem_strbuf_t *members = wmem_strbuf_new(pinfo->pool, "");
+  uint32_t       mode;
+  unsigned       set = 0;
+  int            start;
+
+  mi = proto_tree_add_item_ret_uint(tree, hf_dash_sig_inv_mode, tvb, offset, 1, ENC_NA, &mode);
+  offset++;
+  start = offset;
+  *nset = 0;
+
+  if (mode == 0) {
+    int      nbytes = dash_check_len(tvb, offset, (size + 7) / 8);
+    uint64_t i;
+
+    ti = proto_tree_add_item(tree, hf_dash_sig_inv_bits, tvb, offset, nbytes, ENC_NA);
+    subtree = proto_item_add_subtree(ti, ett_dash_sig_inv_bits);
+    for (i = 0; i < size; i++) {
+      if (tvb_get_uint8(tvb, offset + (int)(i / 8)) & (1 << (i % 8))) {
+        if (set)
+          wmem_strbuf_append_c(members, ',');
+        wmem_strbuf_append_printf(members, "%" PRIu64, i);
+        set++;
+      }
+    }
+    /* ReadFixedBitSet rejects set padding bits (serialize.h:470-476) */
+    if (size % 8 && (tvb_get_uint8(tvb, offset + nbytes - 1) & (uint8_t)~(0xffU >> (8 - size % 8))))
+      expert_add_info(pinfo, ti, &ei_dash_sig_inv_padding);
+    offset += nbytes;
+  } else if (mode == 1) {
+    bool     have_last = false;
+    uint64_t last = 0;
+
+    ti = proto_tree_add_item(tree, hf_dash_sig_inv_bits, tvb, offset, -1, ENC_NA);
+    subtree = proto_item_add_subtree(ti, ett_dash_sig_inv_bits);
+    for (;;) {
+      int         len;
+      uint64_t    v, idx;
+      proto_item *oi;
+
+      v = dash_get_varint(tvb, offset, &len);
+      if (v > UINT32_MAX)
+        THROW(ReportedBoundsError);
+      oi = proto_tree_add_uint(subtree, hf_dash_sig_inv_offset, tvb, offset, len, (uint32_t)v);
+      offset += len;
+      if (v == 0) {
+        proto_item_append_text(oi, " (end)");
+        break;
+      }
+      idx = have_last ? last + v : v - 1;
+      proto_item_append_text(oi, " (index %" PRIu64 ")", idx);
+      if (idx >= size) {
+        expert_add_info(pinfo, oi, &ei_dash_sig_inv_index);
+        break;
+      }
+      if (set)
+        wmem_strbuf_append_c(members, ',');
+      wmem_strbuf_append_printf(members, "%" PRIu64, idx);
+      set++;
+      last = idx;
+      have_last = true;
+    }
+    proto_item_set_end(ti, tvb, offset);
+  } else {
+    expert_add_info(pinfo, mi, &ei_dash_sig_inv_mode);
+    return -1;
+  }
+
+  ti = proto_tree_add_uint(subtree, hf_dash_bitset_count, tvb, start, offset - start, set);
+  proto_item_set_generated(ti);
+  ti = proto_tree_add_string(subtree, hf_dash_bitset_members, tvb, start, offset - start,
+                             wmem_strbuf_get_str(members));
+  proto_item_set_generated(ti);
+  if (set)
+    proto_item_append_text(proto_tree_get_parent(subtree), " (%u of %" PRIu64 " set: %s)", set, size,
+                           wmem_strbuf_get_str(members));
+  else
+    proto_item_append_text(proto_tree_get_parent(subtree), " (0 of %" PRIu64 " set)", size);
+  *nset = set;
+  return offset;
+}
+
+/* qsigsinv / qgetsigs: vector<CSigSharesInv> (signing_shares.h:128-154) */
+static int
+dissect_dash_msg_qsigsinv(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+  int      offset = 0;
+  uint64_t count, i;
+  bool     flagged = false;
+
+  count = dash_add_compactsize(tree, hf_dash_sig_count, tvb, &offset);
+  col_append_fstr(pinfo->cinfo, COL_INFO, " (%" PRIu64 ")", count);
+  for (i = 0; i < count; i++) {
+    proto_item *ti;
+    proto_tree *subtree;
+    uint32_t    sid;
+    uint64_t    size;
+    unsigned    nset;
+    proto_item *si;
+
+    DASH_LOOP_CHECK(tvb, offset);
+    subtree = dash_subtree(tree, hf_dash_sig_inv, ett_dash_sig_entry, tvb, offset, &ti);
+    sid = dash_add_session_id(subtree, tvb, &offset);
+    size = dash_add_compactsize_item(subtree, hf_dash_sig_inv_size, tvb, &offset, &si);
+    /* The reader throws above MAX_MSGS_TOTAL_BATCHED_SIGS = MAX_LLMQ_SIZE
+     * (signing_shares.h:137-141) */
+    if (size > DASH_MAX_LLMQ_SIZE && !flagged) {
+      expert_add_info(pinfo, si, &ei_dash_sig_inv_size);
+      flagged = true;   /* once per message */
+    }
+    offset = dissect_dash_autobitset(subtree, tvb, pinfo, offset, size, &nset);
+    if (offset < 0) {
+      proto_item_set_len(ti, 1);
+      return tvb_captured_length(tvb);
+    }
+    proto_item_append_text(ti, " #%" PRIu64 ": session %u, %u of %" PRIu64, i, sid, nset, size);
+    proto_item_set_end(ti, tvb, offset);
+  }
+  return offset;
+}
+
+/* qbsigs: vector<CBatchedSigShares> (signing_shares.h:157-170,
+ * net_signing.cpp:27-45) */
+static int
+dissect_dash_msg_qbsigs(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+  int      offset = 0;
+  uint64_t count, i, total = 0;
+
+  count = dash_add_compactsize(tree, hf_dash_sig_count, tvb, &offset);
+  for (i = 0; i < count; i++) {
+    proto_item *ti;
+    proto_tree *subtree;
+    uint32_t    sid;
+    uint64_t    n, j;
+
+    DASH_LOOP_CHECK(tvb, offset);
+    subtree = dash_subtree(tree, hf_dash_sig_batch, ett_dash_sig_batch, tvb, offset, &ti);
+    sid = dash_add_session_id(subtree, tvb, &offset);
+    n = dash_add_compactsize(subtree, hf_dash_sig_batch_count, tvb, &offset);
+    dash_check_len(tvb, offset, n * (2 + DASH_BLS_SIG_LEN));
+    for (j = 0; j < n; j++) {
+      proto_item *si;
+      proto_tree *stree;
+      uint32_t    member;
+
+      si = proto_tree_add_item(subtree, hf_dash_sig_share_entry, tvb, offset, 2 + DASH_BLS_SIG_LEN, ENC_NA);
+      stree = proto_item_add_subtree(si, ett_dash_sig_entry);
+      member = dash_add_uint(stree, hf_dash_sig_quorum_member, tvb, &offset, 2);
+      dash_add_item(stree, hf_dash_sig_share, tvb, &offset, DASH_BLS_SIG_LEN, ENC_NA);
+      proto_item_append_text(si, " (member %u)", member);
+    }
+    total += n;
+    proto_item_append_text(ti, " #%" PRIu64 ": session %u, %" PRIu64 " shares", i, sid, n);
+    proto_item_set_end(ti, tvb, offset);
+  }
+  col_append_fstr(pinfo->cinfo, COL_INFO, " (%" PRIu64 " batches, %" PRIu64 " shares)", count, total);
+  return offset;
+}
+
+/* qsigshare: vector<CSigShare> (signing_shares.h:50-90); quorumMember
+ * comes before id */
+static int
+dissect_dash_msg_qsigshare(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+  int      offset = 0;
+  uint64_t count, i;
+
+  count = dash_add_compactsize(tree, hf_dash_sig_count, tvb, &offset);
+  col_append_fstr(pinfo->cinfo, COL_INFO, " (%" PRIu64 ")", count);
+  dash_check_len(tvb, offset, count * DASH_SIGSHARE_LEN);
+  for (i = 0; i < count; i++) {
+    proto_item *ti;
+    proto_tree *subtree;
+    uint32_t    type, member;
+    int         start = offset;
+
+    ti = proto_tree_add_item(tree, hf_dash_sig_share_entry, tvb, offset, DASH_SIGSHARE_LEN, ENC_NA);
+    subtree = proto_item_add_subtree(ti, ett_dash_sig_entry);
+    type = dash_add_uint(subtree, hf_dash_llmq_type, tvb, &offset, 1);
+    dash_add_hash(subtree, hf_dash_quorum_hash, tvb, &offset);
+    member = dash_add_uint(subtree, hf_dash_sig_quorum_member, tvb, &offset, 2);
+    dash_add_hash(subtree, hf_dash_sig_request_id, tvb, &offset);
+    dash_add_hash(subtree, hf_dash_sig_msg_hash, tvb, &offset);
+    dash_llmq_add_sign_hash(subtree, tvb, start, start + 1, start + 35, start + 67, start, 99);
+    dash_add_item(subtree, hf_dash_sig_share, tvb, &offset, DASH_BLS_SIG_LEN, ENC_NA);
+    proto_item_append_text(ti, " #%" PRIu64 ": %s, member %u", i, dash_llmq_type_str(type), member);
+  }
+  return offset;
+}
+
+/* ------------------------------------------------------------------------
+ * ChainLocks, InstantSend, Platform bans
+ * ------------------------------------------------------------------------ */
+
+/* clsig: chainlock::ChainLockSig (chainlock/chainlock.h:23-45), 132 bytes */
+static int
+dissect_dash_msg_clsig(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+  /* Request id = SerializeHash(pair("clsig", nHeight)) (chainlock/clsig.cpp:250) */
+  static const uint8_t prefix[] = { 5, 'c', 'l', 's', 'i', 'g' };
+  int     offset = 0;
+  int32_t height;
+
+  height = dash_add_int(tree, hf_dash_clsig_height, tvb, &offset, 4);
+  dash_llmq_add_hash_of(tree, hf_dash_clsig_request_id, tvb, pinfo, prefix, (int)sizeof(prefix), 0, 4);
+  dash_add_hash(tree, hf_dash_clsig_block_hash, tvb, &offset);
+  dash_add_item(tree, hf_dash_clsig_sig, tvb, &offset, DASH_BLS_SIG_LEN, ENC_NA);
+  /* inv hash: SerializeHash(clsig) (chainlock/handler.cpp:130) */
+  dash_llmq_add_hash_of(tree, hf_dash_llmq_inv_hash, tvb, pinfo, NULL, 0, 0, offset);
+  col_append_fstr(pinfo->cinfo, COL_INFO, " (height %d)", height);
+  return offset;
+}
+
+/* isdlock: instantsend::InstantSendLock (instantsend/lock.h:21-48) */
+static int
+dissect_dash_msg_isdlock(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+  /* Request id = SerializeHash("islock", inputs) (instantsend/lock.cpp:18-24) */
+  static const uint8_t prefix[] = { 6, 'i', 's', 'l', 'o', 'c', 'k' };
+  int      offset = 0;
+  int      inputs_start;
+  uint64_t count, i;
+
+  dash_add_item(tree, hf_dash_isdlock_version, tvb, &offset, 1, ENC_NA);
+  inputs_start = offset;
+  count = dash_add_compactsize(tree, hf_dash_isdlock_input_count, tvb, &offset);
+  dash_check_len(tvb, offset, count * 36);
+  for (i = 0; i < count; i++)
+    offset = dissect_dash_outpoint(tree, hf_dash_isdlock_input, tvb, pinfo, offset);
+  dash_llmq_add_hash_of(tree, hf_dash_isdlock_request_id, tvb, pinfo, prefix, (int)sizeof(prefix),
+                        inputs_start, offset - inputs_start);
+  col_append_fstr(pinfo->cinfo, COL_INFO, " (txid %s)", dash_rhash_str(pinfo->pool, tvb, offset, DASH_HASH_LEN));
+  dash_add_hash(tree, hf_dash_isdlock_txid, tvb, &offset);
+  dash_add_hash(tree, hf_dash_isdlock_cycle_hash, tvb, &offset);
+  dash_add_item(tree, hf_dash_isdlock_sig, tvb, &offset, DASH_BLS_SIG_LEN, ENC_NA);
+  /* inv hash: SerializeHash(*islock) (instantsend/signing.cpp:357) */
+  dash_llmq_add_hash_of(tree, hf_dash_llmq_inv_hash, tvb, pinfo, NULL, 0, 0, offset);
+  return offset;
+}
+
+/*
+ * platformban: PlatformBanMessage (masternode/meta.h:166-185), 164 bytes.
+ * The wire format is the same for every protocol version: 70238
+ * (PLATFORM_BAN_VERSION) only introduced the message and 70240
+ * (PLATFORMBAN_V2_SHORT_ID_VERSION) only added the BIP324 short id
+ * (net.cpp:1003-1005); neither is referenced by the serializer.
+ */
+static int
+dissect_dash_msg_platformban(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+  int     offset = 0;
+  int32_t height;
+
+  dash_add_hash(tree, hf_dash_protx_hash, tvb, &offset);
+  height = dash_add_int(tree, hf_dash_platformban_height, tvb, &offset, 4);
+  dash_add_hash(tree, hf_dash_quorum_hash, tvb, &offset);
+  /* The hash excludes the signature (SER_GETHASH, meta.h:179) */
+  dash_llmq_add_hash_of(tree, hf_dash_llmq_inv_hash, tvb, pinfo, NULL, 0, 0, offset);
+  dash_add_item(tree, hf_dash_platformban_sig, tvb, &offset, DASH_BLS_SIG_LEN, ENC_NA);
+  col_append_fstr(pinfo->cinfo, COL_INFO, " (%s at height %d)",
+                  dash_rhash_str(pinfo->pool, tvb, 0, DASH_HASH_LEN), height);
+  return offset;
+}
+
+/* ------------------------------------------------------------------------
+ * qgetdata / qdata: CQuorumDataRequest (llmq/quorums.h:75-132)
+ * ------------------------------------------------------------------------ */
+
+static int * const dash_qdata_mask_flags[] = {
+  &hf_dash_qdata_mask_vvec,
+  &hf_dash_qdata_mask_contrib,
+  NULL
+};
+
+static int
+dissect_dash_qdata_request(proto_tree *tree, tvbuff_t *tvb, packet_info *pinfo, int offset, uint32_t *mask)
+{
+  uint32_t type;
+
+  type = dash_add_uint(tree, hf_dash_llmq_type, tvb, &offset, 1);
+  dash_add_hash(tree, hf_dash_quorum_hash, tvb, &offset);
+  *mask = tvb_get_letohs(tvb, offset);
+  proto_tree_add_bitmask(tree, tvb, offset, hf_dash_qdata_mask, ett_dash_qdata_mask,
+                         dash_qdata_mask_flags, ENC_LITTLE_ENDIAN);
+  offset += 2;
+  dash_add_hash(tree, hf_dash_protx_hash, tvb, &offset);
+  col_append_fstr(pinfo->cinfo, COL_INFO, " (%s, mask 0x%04x)", dash_llmq_type_str(type), *mask);
+  return offset;
+}
+
+/*
+ * qgetdata: 67 bytes.  nError is response-only; CQuorumDataRequest's reader
+ * would accept a 68th byte as nError, but v24 receivers reject any qgetdata
+ * longer than 67 bytes (llmq/net_quorum.cpp:85-94).
+ */
+static int
+dissect_dash_msg_qgetdata(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+  uint32_t    mask;
+  int         offset;
+  proto_item *ti;
+
+  offset = dissect_dash_qdata_request(tree, tvb, pinfo, 0, &mask);
+  if (tvb_reported_length_remaining(tvb, offset) == 1) {
+    ti = proto_tree_add_item(tree, hf_dash_qdata_error, tvb, offset, 1, ENC_NA);
+    expert_add_info(pinfo, ti, &ei_dash_qgetdata_error);
+    offset++;
+  }
+  return offset;
+}
+
+/*
+ * qdata: request + nError, then (only if nError == NONE) the verification
+ * vector if mask & 1 and vector<CBLSIESEncryptedObject<CBLSSecretKey>> if
+ * mask & 2 (llmq/net_quorum.cpp:96-118, 168-200, 249-268, 296-297).
+ */
+static int
+dissect_dash_msg_qdata(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+  int      offset = 0;
+  uint32_t mask;
+  uint32_t error = 0xff;
+
+  offset = dissect_dash_qdata_request(tree, tvb, pinfo, offset, &mask);
+  /* nError is read inside try/catch: a missing byte means UNDEFINED (quorums.h:123-127) */
+  if (tvb_reported_length_remaining(tvb, offset) < 1)
+    return offset;
+  error = dash_add_uint(tree, hf_dash_qdata_error, tvb, &offset, 1);
+  if (error != 0) {
+    col_append_fstr(pinfo->cinfo, COL_INFO, " [%s]", val_to_str_const(error, dash_qdata_errors, "Unknown error"));
+    return offset;
+  }
+  if (mask & DASH_QDATA_VVEC)
+    offset = dissect_dash_vvec(tree, tvb, offset);
+  if (mask & DASH_QDATA_CONTRIB) {
+    proto_item *ti;
+    proto_tree *subtree;
+    uint64_t    count, i;
+
+    subtree = dash_subtree(tree, hf_dash_qdata_contributions, ett_dash_blsies, tvb, offset, &ti);
+    count = dash_add_compactsize(subtree, hf_dash_blsies_object_count, tvb, &offset);
+    for (i = 0; i < count; i++) {
+      DASH_LOOP_CHECK(tvb, offset);
+      offset = dissect_dash_blsies_object(subtree, tvb, offset, i);
+    }
+    proto_item_append_text(ti, " (%" PRIu64 ")", count);
+    proto_item_set_end(ti, tvb, offset);
+  }
+  return offset;
+}
+
+static void
+dash_register_llmq(void)
+{
+  dash_add_command("qcontrib",    dissect_dash_msg_qcontrib);
+  dash_add_command("qcomplaint",  dissect_dash_msg_qcomplaint);
+  dash_add_command("qjustify",    dissect_dash_msg_qjustify);
+  dash_add_command("qpcommit",    dissect_dash_msg_qpcommit);
+  dash_add_command("qfcommit",    dissect_dash_msg_qfcommit);
+  dash_add_command("qsigsesann",  dissect_dash_msg_qsigsesann);
+  dash_add_command("qsigsinv",    dissect_dash_msg_qsigsinv);
+  dash_add_command("qgetsigs",    dissect_dash_msg_qsigsinv);
+  dash_add_command("qbsigs",      dissect_dash_msg_qbsigs);
+  dash_add_command("qsigshare",   dissect_dash_msg_qsigshare);
+  dash_add_command("qsigrec",     dissect_dash_msg_qsigrec);
+  dash_add_command("clsig",       dissect_dash_msg_clsig);
+  dash_add_command("isdlock",     dissect_dash_msg_isdlock);
+  dash_add_command("platformban", dissect_dash_msg_platformban);
+  dash_add_command("qgetdata",    dissect_dash_msg_qgetdata);
+  dash_add_command("qdata",       dissect_dash_msg_qdata);
+}
+
 void
 proto_register_dash(void)
 {
@@ -4209,6 +5045,296 @@ proto_register_dash(void)
       { "Vote hash", "dash.govobjvote.hash",
         FT_BYTES, BASE_NONE, NULL, 0x0,
         "Vote hash (MSG_GOVERNANCE_OBJECT_VOTE inventory hash, computed)", HFILL }
+    },
+    { &hf_dash_llmq_inv_hash,
+      { "Hash", "dash.llmq.inv_hash",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        "SHA256d of the serialized object (computed); the hash used in inv/getdata", HFILL }
+    },
+    { &hf_dash_vvec,
+      { "Verification vector", "dash.vvec",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_vvec_count,
+      { "Count", "dash.vvec.count",
+        FT_UINT64, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_vvec_pubkey,
+      { "Public key", "dash.vvec.pubkey",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_blsies_ephemeral_pubkey,
+      { "Ephemeral public key", "dash.blsies.ephemeral_pubkey",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_blsies_iv_seed,
+      { "IV seed", "dash.blsies.iv_seed",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_blsies_blob_count,
+      { "Blob count", "dash.blsies.blob_count",
+        FT_UINT64, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_blsies_blob,
+      { "Encrypted blob", "dash.blsies.blob",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        "AES-256-CBC encrypted secret key share for one quorum member", HFILL }
+    },
+    { &hf_dash_blsies_object,
+      { "Encrypted contribution", "dash.blsies.object",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_blsies_object_count,
+      { "Count", "dash.blsies.object_count",
+        FT_UINT64, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_blsies_data,
+      { "Encrypted data", "dash.blsies.data",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_dkg_sig,
+      { "Member signature", "dash.dkg.sig",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_qcontrib_contributions,
+      { "Encrypted contributions", "dash.qcontrib.contributions",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_qcomplaint_bad_members,
+      { "Bad members", "dash.qcomplaint.bad_members",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_qcomplaint_complain_for,
+      { "Complain for members", "dash.qcomplaint.complain_for",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_qjustify_count,
+      { "Contribution count", "dash.qjustify.count",
+        FT_UINT64, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_qjustify_contribution,
+      { "Contribution", "dash.qjustify.contribution",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_qjustify_index,
+      { "Member index", "dash.qjustify.index",
+        FT_UINT32, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_qjustify_skey,
+      { "Secret key share", "dash.qjustify.skey",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        "Revealed (plaintext) secret key contribution", HFILL }
+    },
+    { &hf_dash_qpcommit_valid_members,
+      { "Valid members", "dash.qpcommit.valid_members",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_qpcommit_quorum_pubkey,
+      { "Quorum public key", "dash.qpcommit.quorum_pubkey",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_qpcommit_vvec_hash,
+      { "Verification vector hash", "dash.qpcommit.vvec_hash",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_qpcommit_quorum_sig,
+      { "Quorum signature share", "dash.qpcommit.quorum_sig",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_sig_count,
+      { "Count", "dash.sig.count",
+        FT_UINT64, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_sig_session_id,
+      { "Session ID", "dash.sig.session_id",
+        FT_UINT32, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_sig_request_id,
+      { "Request ID", "dash.sig.request_id",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_sig_msg_hash,
+      { "Message hash", "dash.sig.msg_hash",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_sig_sign_hash,
+      { "Sign hash", "dash.sig.sign_hash",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        "SHA256d(llmqType, quorumHash, id, msgHash) (computed)", HFILL }
+    },
+    { &hf_dash_sig_quorum_member,
+      { "Quorum member", "dash.sig.quorum_member",
+        FT_UINT16, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_sig_share,
+      { "Signature share", "dash.sig.share",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_sig_recovered,
+      { "Recovered signature", "dash.sig.recovered",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_sig_ann,
+      { "Session announcement", "dash.sig.ann",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_sig_inv,
+      { "Share inventory", "dash.sig.inv",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_sig_inv_size,
+      { "Inventory size", "dash.sig.inv_size",
+        FT_UINT64, BASE_DEC, NULL, 0x0,
+        "Number of bits (quorum size)", HFILL }
+    },
+    { &hf_dash_sig_inv_mode,
+      { "Bitset encoding", "dash.sig.inv_mode",
+        FT_UINT8, BASE_DEC, VALS(dash_autobitset_modes), 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_sig_inv_bits,
+      { "Members", "dash.sig.inv_bits",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_sig_inv_offset,
+      { "Index offset", "dash.sig.inv_offset",
+        FT_UINT32, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_sig_batch,
+      { "Batch", "dash.sig.batch",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_sig_batch_count,
+      { "Share count", "dash.sig.batch_count",
+        FT_UINT64, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_sig_share_entry,
+      { "Signature share", "dash.sig.share_entry",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_clsig_height,
+      { "Height", "dash.clsig.height",
+        FT_INT32, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_clsig_block_hash,
+      { "Block hash", "dash.clsig.block_hash",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_clsig_sig,
+      { "Signature", "dash.clsig.sig",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_clsig_request_id,
+      { "Request ID", "dash.clsig.request_id",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        "SHA256d of the serialized pair (clsig, height) (computed)", HFILL }
+    },
+    { &hf_dash_isdlock_version,
+      { "Version", "dash.isdlock.version",
+        FT_UINT8, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_isdlock_input_count,
+      { "Input count", "dash.isdlock.input_count",
+        FT_UINT64, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_isdlock_input,
+      { "Input", "dash.isdlock.input",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_isdlock_txid,
+      { "TXID", "dash.isdlock.txid",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_isdlock_cycle_hash,
+      { "Cycle hash", "dash.isdlock.cycle_hash",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_isdlock_sig,
+      { "Signature", "dash.isdlock.sig",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_isdlock_request_id,
+      { "Request ID", "dash.isdlock.request_id",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        "SHA256d of the serialized string islock followed by the inputs (computed)", HFILL }
+    },
+    { &hf_dash_platformban_height,
+      { "Requested height", "dash.platformban.height",
+        FT_INT32, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_platformban_sig,
+      { "Signature", "dash.platformban.sig",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        "Always basic BLS scheme", HFILL }
+    },
+    { &hf_dash_qdata_mask,
+      { "Data mask", "dash.qdata.mask",
+        FT_UINT16, BASE_HEX, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_qdata_mask_vvec,
+      { "Quorum verification vector", "dash.qdata.mask.vvec",
+        FT_BOOLEAN, 16, TFS(&tfs_requested_not_requested), 0x0001,
+        NULL, HFILL }
+    },
+    { &hf_dash_qdata_mask_contrib,
+      { "Encrypted contributions", "dash.qdata.mask.contrib",
+        FT_BOOLEAN, 16, TFS(&tfs_requested_not_requested), 0x0002,
+        NULL, HFILL }
+    },
+    { &hf_dash_qdata_error,
+      { "Error", "dash.qdata.error",
+        FT_UINT8, BASE_DEC, VALS(dash_qdata_errors), 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_qdata_contributions,
+      { "Encrypted contributions", "dash.qdata.contributions",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
     },/* END GENERATED HF_REG */
   };
 
@@ -4241,7 +5367,16 @@ proto_register_dash(void)
     &ett_dash_dsa_flags,
     &ett_dash_coinjoin_collateral,
     &ett_dash_govsync_filter,
-    &ett_dash_govobj_data,/* END GENERATED ETT_REG */
+    &ett_dash_govobj_data,
+    &ett_dash_vvec,
+    &ett_dash_blsies,
+    &ett_dash_blsies_object,
+    &ett_dash_qjustify_contribution,
+    &ett_dash_sig_entry,
+    &ett_dash_sig_inv_bits,
+    &ett_dash_sig_batch,
+    &ett_dash_isdlock_input,
+    &ett_dash_qdata_mask,/* END GENERATED ETT_REG */
   };
 
   static ei_register_info ei[] = {
@@ -4255,7 +5390,12 @@ proto_register_dash(void)
     { &ei_dash_dsa_flags_invalid, { "dash.dsa.flags.invalid", PI_PROTOCOL, PI_WARN, "Promotion and demotion flags are both set", EXPFILL } },
     { &ei_dash_govvote_sig_size, { "dash.govobjvote.sig.bad_size", PI_MALFORMED, PI_WARN, "Vote signature must be 65 or 96 bytes", EXPFILL } },
     { &ei_dash_vector_too_long, { "dash.vector_too_long", PI_MALFORMED, PI_ERROR, "Vector length exceeds the limit enforced by Dash Core", EXPFILL } },
-    { &ei_dash_govsync_hash_funcs, { "dash.govsync.filter.hash_funcs.too_many", PI_PROTOCOL, PI_WARN, "Number of hash functions exceeds MAX_HASH_FUNCS (50); the filter is rejected", EXPFILL } },/* END GENERATED EI_REG */
+    { &ei_dash_govsync_hash_funcs, { "dash.govsync.filter.hash_funcs.too_many", PI_PROTOCOL, PI_WARN, "Number of hash functions exceeds MAX_HASH_FUNCS (50); the filter is rejected", EXPFILL } },
+    { &ei_dash_sig_inv_mode, { "dash.sig.inv_mode.invalid", PI_MALFORMED, PI_ERROR, "Invalid AUTOBITSET encoding byte (must be 0 or 1)", EXPFILL } },
+    { &ei_dash_sig_inv_index, { "dash.sig.inv_offset.invalid", PI_MALFORMED, PI_WARN, "Bitset index out of range or not increasing", EXPFILL } },
+    { &ei_dash_sig_inv_padding, { "dash.sig.inv_bits.padding", PI_MALFORMED, PI_WARN, "Padding bits set in the last byte of the bitset", EXPFILL } },
+    { &ei_dash_qgetdata_error, { "dash.qgetdata.error_present", PI_PROTOCOL, PI_WARN, "qgetdata carries a response-only nError byte (rejected as oversized by Dash Core v24)", EXPFILL } },
+    { &ei_dash_sig_inv_size, { "dash.sig.inv_size.too_large", PI_MALFORMED, PI_WARN, "Inventory size exceeds the maximum quorum size (400)", EXPFILL } },/* END GENERATED EI_REG */
   };
 
   module_t        *dash_module;
@@ -4337,6 +5477,7 @@ proto_reg_handoff_dash(void)
   dash_add_command("sendheaders2", dissect_dash_msg_empty);
 
   dash_register_coinjoin_gov();
+  dash_register_llmq();
 }
 
 /*
