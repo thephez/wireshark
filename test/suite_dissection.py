@@ -818,15 +818,15 @@ class TestDissectDash:
     # claimed by other dissectors, so try heuristics first.
     tshark_args = ('-otcp.try_heuristic_first:TRUE',)
     commands = {
-        'addrv2', 'block', 'blocktxn', 'cfcheckpt', 'cfilter', 'clsig', 'cmpctblock', 'dsa',
-        'dsc', 'dsf', 'dsi', 'dsq', 'dss', 'dssu', 'dstx', 'getaddr',
-        'getblocks', 'getblocktxn', 'getcfcheckpt', 'getcfheaders', 'getcfilters', 'getdata', 'getheaders', 'getheaders2',
-        'getmnlistd', 'getsporks', 'govobj', 'govobjvote', 'govsync', 'headers', 'headers2', 'inv',
-        'isdlock', 'mempool', 'mnauth', 'mnlistdiff', 'notfound', 'ping', 'platformban', 'pong',
-        'qbsigs', 'qcomplaint', 'qcontrib', 'qdata', 'qfcommit', 'qgetdata', 'qgetsigs', 'qjustify',
-        'qpcommit', 'qrinfo', 'qsendrecsigs', 'qsigrec', 'qsigsesann', 'qsigsinv', 'qwatch', 'sendaddrv2',
-        'sendcmpct', 'senddsq', 'sendheaders', 'sendheaders2', 'sendtxrcncl', 'spork', 'ssc', 'tx',
-        'verack', 'version',
+        'addr', 'addrv2', 'block', 'blocktxn', 'cfcheckpt', 'cfilter', 'clsig', 'cmpctblock',
+        'dsa', 'dsc', 'dsf', 'dsi', 'dsq', 'dss', 'dssu', 'dstx',
+        'filteradd', 'filterclear', 'filterload', 'getaddr', 'getblocks', 'getblocktxn', 'getcfcheckpt', 'getcfheaders',
+        'getcfilters', 'getdata', 'getheaders', 'getheaders2', 'getmnlistd', 'getsporks', 'govobj', 'govobjvote',
+        'govsync', 'headers', 'headers2', 'inv', 'isdlock', 'mempool', 'merkleblock', 'mnauth',
+        'mnlistdiff', 'notfound', 'ping', 'platformban', 'pong', 'qbsigs', 'qcomplaint', 'qcontrib',
+        'qdata', 'qfcommit', 'qgetdata', 'qgetsigs', 'qjustify', 'qpcommit', 'qrinfo', 'qsendrecsigs',
+        'qsigrec', 'qsigsesann', 'qsigshare', 'qsigsinv', 'qwatch', 'sendaddrv2', 'sendcmpct', 'senddsq',
+        'sendheaders', 'sendheaders2', 'sendtxrcncl', 'spork', 'ssc', 'tx', 'verack', 'version',
     }
 
     def run(self, cmd_tshark, capture_file, test_env, *args):
