@@ -471,7 +471,61 @@ static int hf_dash_cf_count;
 static int hf_dash_cf_filter_hash;
 static int hf_dash_cf_header;
 static int hf_dash_txrcncl_version;
-static int hf_dash_txrcncl_salt;/* END GENERATED HF_DECL */
+static int hf_dash_txrcncl_salt;
+static int hf_dash_spork_id;
+static int hf_dash_spork_value;
+static int hf_dash_spork_active;
+static int hf_dash_spork_time_signed;
+static int hf_dash_spork_sig;
+static int hf_dash_spork_hash;
+static int hf_dash_ssc_item;
+static int hf_dash_ssc_count;
+static int hf_dash_mnauth_sig;
+static int hf_dash_senddsq_enabled;
+static int hf_dash_qsendrecsigs_enabled;
+static int hf_dash_coinjoin_denom_amount;
+static int hf_dash_coinjoin_collateral;
+static int hf_dash_dsa_denom;
+static int hf_dash_dsa_flags;
+static int hf_dash_dsa_flag_promotion;
+static int hf_dash_dsa_flag_demotion;
+static int hf_dash_dsi_in_count;
+static int hf_dash_dsi_out_count;
+static int hf_dash_dsi_out;
+static int hf_dash_dsf_session_id;
+static int hf_dash_dss_in_count;
+static int hf_dash_dsc_session_id;
+static int hf_dash_dsc_message_id;
+static int hf_dash_dssu_session_id;
+static int hf_dash_dssu_state;
+static int hf_dash_dssu_status;
+static int hf_dash_dssu_message_id;
+static int hf_dash_dsq_denom;
+static int hf_dash_dsq_time;
+static int hf_dash_dsq_ready;
+static int hf_dash_dsq_sig;
+static int hf_dash_dsq_hash;
+static int hf_dash_dstx_sig;
+static int hf_dash_dstx_sig_time;
+static int hf_dash_govsync_prop_hash;
+static int hf_dash_govsync_filter;
+static int hf_dash_govobj_parent_hash;
+static int hf_dash_govobj_revision;
+static int hf_dash_govobj_time;
+static int hf_dash_govobj_collateral_hash;
+static int hf_dash_govobj_data;
+static int hf_dash_govobj_data_text;
+static int hf_dash_govobj_type;
+static int hf_dash_govobj_mn_outpoint;
+static int hf_dash_govobj_sig;
+static int hf_dash_govobj_hash;
+static int hf_dash_govvote_mn_outpoint;
+static int hf_dash_govvote_parent_hash;
+static int hf_dash_govvote_outcome;
+static int hf_dash_govvote_signal;
+static int hf_dash_govvote_time;
+static int hf_dash_govvote_sig;
+static int hf_dash_govvote_hash;/* END GENERATED HF_DECL */
 
 static int ett_dash;
 static int ett_dash_payload;
@@ -497,14 +551,23 @@ static int ett_dash_addr_entry;
 static int ett_dash_inv_entry;
 static int ett_dash_headers_entry;
 static int ett_dash_hdr2_flags;
-static int ett_dash_cmpct_prefilled;/* END GENERATED ETT_DECL */
+static int ett_dash_cmpct_prefilled;
+static int ett_dash_dsa_flags;
+static int ett_dash_coinjoin_collateral;
+static int ett_dash_govsync_filter;
+static int ett_dash_govobj_data;/* END GENERATED ETT_DECL */
 
 static expert_field ei_dash_command_unknown;
 static expert_field ei_dash_checksum_bad;
 static expert_field ei_dash_trailing_data;
 static expert_field ei_dash_payload_trailing;
 static expert_field ei_dash_address_length;
-static expert_field ei_dash_hdr2_version;/* END GENERATED EI_DECL */
+static expert_field ei_dash_hdr2_version;
+static expert_field ei_dash_coinjoin_denom_invalid;
+static expert_field ei_dash_dsa_flags_invalid;
+static expert_field ei_dash_govvote_sig_size;
+static expert_field ei_dash_vector_too_long;
+static expert_field ei_dash_govsync_hash_funcs;/* END GENERATED EI_DECL */
 
 static bool dash_desegment = true;
 static bool dash_verify_checksum = true;
@@ -2183,6 +2246,746 @@ dash_add_command(const char *command, dissector_t fn)
   dissector_add_string("dash.command", command, create_dissector_handle(fn, proto_dash));
 }
 
+/* ------------------------------------------------------------------------
+ * Fragment: coinjoin_gov
+ * Sporks, sync status count, mnauth, simple flag messages, CoinJoin and
+ * governance.  Wire formats from Dash Core v24.0.1 (src/ paths below).
+ * ------------------------------------------------------------------------ */
+
+/* version.h:73 - dsa carries nFlags only at or above this version */
+#define DASH_COINJOIN_REBALANCE_VERSION 70241
+
+/* coinjoin/common.h:41-47 vecStandardDenominations (duffs) */
+static const int64_t dash_cj_denominations[] = {
+  1000010000,  /* 10.0001 DASH */
+   100001000,  /* 1.00001 */
+    10000100,  /* 0.100001 */
+     1000010,  /* 0.0100001 */
+      100001   /* 0.00100001 */
+};
+
+/* coinjoin/common.h:31-44 GetMaxPoolInputOutputCount():
+ * nPoolMaxParticipants(20) * COINJOIN_ENTRY_MAX_SIZE(9) */
+
+/* spork.h:34-43 (current) plus retired IDs from earlier spork.h versions
+ * (git history v0.12.1 - v23); the rule is id = 9999 + N for SPORK_N. */
+static const value_string dash_spork_ids[] = {
+  { 10001, "SPORK_2_INSTANTSEND_ENABLED" },
+  { 10002, "SPORK_3_INSTANTSEND_BLOCK_FILTERING (retired)" },
+  { 10004, "SPORK_5_INSTANTSEND_MAX_VALUE (retired)" },
+  { 10005, "SPORK_6_NEW_SIGS (retired)" },
+  { 10007, "SPORK_8_MASTERNODE_PAYMENT_ENFORCEMENT (retired)" },
+  { 10008, "SPORK_9_SUPERBLOCKS_ENABLED (retired)" },
+  { 10009, "SPORK_10_MASTERNODE_PAY_UPDATED_NODES (retired)" },
+  { 10011, "SPORK_12_RECONSIDER_BLOCKS (retired)" },
+  { 10012, "SPORK_13_OLD_SUPERBLOCK_FLAG (retired)" },
+  { 10013, "SPORK_14_REQUIRE_SENTINEL_FLAG (retired)" },
+  { 10014, "SPORK_15_DETERMINISTIC_MNS_ENABLED (retired)" },
+  { 10015, "SPORK_16_INSTANTSEND_AUTOLOCKS (retired)" },
+  { 10016, "SPORK_17_QUORUM_DKG_ENABLED" },
+  { 10017, "SPORK_18_QUORUM_DEBUG_ENABLED (retired)" },
+  { 10018, "SPORK_19_CHAINLOCKS_ENABLED" },
+  { 10019, "SPORK_20_INSTANTSEND_LLMQ_BASED (retired)" },
+  { 10020, "SPORK_21_QUORUM_ALL_CONNECTED" },
+  { 10021, "SPORK_22_PS_MORE_PARTICIPANTS (retired)" },
+  { 10022, "SPORK_23_QUORUM_POSE" },
+  { 10023, "SPORK_24_TEST_EHF (retired)" },
+  { (uint32_t)-1, "SPORK_INVALID" },
+  { 0, NULL }
+};
+
+/* masternode/sync.h:16-20 */
+static const value_string dash_ssc_items[] = {
+  { 1,   "MASTERNODE_SYNC_BLOCKCHAIN" },
+  { 4,   "MASTERNODE_SYNC_GOVERNANCE" },
+  { 10,  "MASTERNODE_SYNC_GOVOBJ" },
+  { 11,  "MASTERNODE_SYNC_GOVOBJ_VOTE" },
+  { 999, "MASTERNODE_SYNC_FINISHED" },
+  { 0, NULL }
+};
+
+/* coinjoin/coinjoin.h:65-91 PoolMessage; text from coinjoin.cpp:507-555 */
+static const value_string dash_cj_pool_messages[] = {
+  {  0, "ERR_ALREADY_HAVE (Already have that input)" },
+  {  1, "ERR_DENOM (No matching denominations found for mixing)" },
+  {  2, "ERR_ENTRIES_FULL (Entries are full)" },
+  {  3, "ERR_EXISTING_TX (Not compatible with existing transactions)" },
+  {  4, "ERR_FEES (Transaction fees are too high)" },
+  {  5, "ERR_INVALID_COLLATERAL (Collateral not valid)" },
+  {  6, "ERR_INVALID_INPUT (Input is not valid)" },
+  {  7, "ERR_INVALID_SCRIPT (Invalid script detected)" },
+  {  8, "ERR_INVALID_TX (Transaction not valid)" },
+  {  9, "ERR_MAXIMUM (Entry exceeds maximum size)" },
+  { 10, "ERR_MN_LIST (Not in the Masternode list)" },
+  { 11, "ERR_MODE (Incompatible mode)" },
+  { 12, "ERR_NON_STANDARD_PUBKEY (not used)" },
+  { 13, "ERR_NOT_A_MN (not used)" },
+  { 14, "ERR_QUEUE_FULL (Masternode queue is full)" },
+  { 15, "ERR_RECENT (Last queue was created too recently)" },
+  { 16, "ERR_SESSION (Session not complete)" },
+  { 17, "ERR_MISSING_TX (Missing input transaction information)" },
+  { 18, "ERR_VERSION (Incompatible version)" },
+  { 19, "MSG_NOERR (No errors detected)" },
+  { 20, "MSG_SUCCESS (Transaction created successfully)" },
+  { 21, "MSG_ENTRIES_ADDED (Your entries added successfully)" },
+  { 22, "ERR_SIZE_MISMATCH (Inputs vs outputs size mismatch)" },
+  { 0, NULL }
+};
+
+/* coinjoin/coinjoin.h:95-103 */
+static const value_string dash_cj_pool_states[] = {
+  { 0, "POOL_STATE_IDLE" },
+  { 1, "POOL_STATE_QUEUE" },
+  { 2, "POOL_STATE_ACCEPTING_ENTRIES" },
+  { 3, "POOL_STATE_SIGNING" },
+  { 4, "POOL_STATE_ERROR" },
+  { 0, NULL }
+};
+
+/* coinjoin/coinjoin.h:107-111 */
+static const value_string dash_cj_status_updates[] = {
+  { 0, "STATUS_REJECTED" },
+  { 1, "STATUS_ACCEPTED" },
+  { 0, NULL }
+};
+
+/* governance/common.h:26-30 */
+static const value_string dash_gov_object_types[] = {
+  { 0, "Unknown" },
+  { 1, "Proposal" },
+  { 2, "Trigger" },
+  { 0, NULL }
+};
+
+/* governance/vote.h:22-28, strings vote.cpp:58-72 */
+static const value_string dash_gov_vote_outcomes[] = {
+  { 0, "none" },
+  { 1, "yes" },
+  { 2, "no" },
+  { 3, "abstain" },
+  { 4, "unknown" },
+  { 0, NULL }
+};
+
+/* governance/vote.h:32-39, strings vote.cpp:74-88 */
+static const value_string dash_gov_vote_signals[] = {
+  { 0, "none" },
+  { 1, "funding" },
+  { 2, "valid" },
+  { 3, "delete" },
+  { 4, "endorsed" },
+  { 5, "unknown" },
+  { 0, NULL }
+};
+
+/* ------------------------------------------------------------------------
+ * Local helpers
+ * ------------------------------------------------------------------------ */
+
+/*
+ * CoinJoin nDenom: a bitmask with exactly one of the 5 lowest bits set,
+ * 1 << index into vecStandardDenominations (coinjoin/common.h:61-106).
+ * Returns a short string for the Info column.
+ */
+static const char *
+dash_cj_add_denom(proto_tree *tree, int hf, tvbuff_t *tvb, packet_info *pinfo, int *offset)
+{
+  proto_item *ti, *ai;
+  proto_tree *subtree;
+  int32_t     denom = (int32_t)tvb_get_letohl(tvb, *offset);
+  const char *str;
+
+  ti = proto_tree_add_item(tree, hf, tvb, *offset, 4, ENC_LITTLE_ENDIAN);
+  if (denom == 0) {
+    str = "N/A";
+  } else if (denom < 0 || denom >= (1 << array_length(dash_cj_denominations))) {
+    str = "out-of-bounds";
+    expert_add_info(pinfo, ti, &ei_dash_coinjoin_denom_invalid);
+  } else if ((denom & (denom - 1)) != 0) {
+    str = "non-denom";
+    expert_add_info(pinfo, ti, &ei_dash_coinjoin_denom_invalid);
+  } else {
+    char    buf[ITEM_LABEL_LENGTH];
+    int64_t amount = 0;
+    unsigned i;
+
+    for (i = 0; i < array_length(dash_cj_denominations); i++) {
+      if (denom == (1 << i))
+        amount = dash_cj_denominations[i];
+    }
+    subtree = proto_item_add_subtree(ti, ett_dash_varbytes);
+    ai = proto_tree_add_int64(subtree, hf_dash_coinjoin_denom_amount, tvb, *offset, 4, amount);
+    proto_item_set_generated(ai);
+    format_dash_amount(buf, (uint64_t)amount);
+    str = wmem_strdup(pinfo->pool, buf);
+  }
+  proto_item_append_text(ti, " (%s)", str);
+  *offset += 4;
+  return str;
+}
+
+/* Collateral transaction wrapped in its own labelled subtree */
+static int
+dash_cj_add_collateral(proto_tree *tree, tvbuff_t *tvb, packet_info *pinfo, int offset,
+                       const dash_pinfo_t *dpi)
+{
+  proto_item *ti;
+  proto_tree *subtree;
+
+  subtree = dash_subtree(tree, hf_dash_coinjoin_collateral, ett_dash_coinjoin_collateral, tvb, offset, &ti);
+  offset = dissect_dash_tx(subtree, tvb, pinfo, offset, -1, dpi);
+  proto_item_set_end(ti, tvb, offset);
+  return offset;
+}
+
+/* Bitcoin CompactSize encoder, for rebuilding hash preimages */
+static unsigned
+dash_put_compactsize(uint8_t *buf, uint64_t n)
+{
+  if (n < 0xfd) {
+    buf[0] = (uint8_t)n;
+    return 1;
+  } else if (n <= 0xffff) {
+    buf[0] = 0xfd;
+    phtoleu16(buf + 1, (uint16_t)n);
+    return 3;
+  } else if (n <= 0xffffffff) {
+    buf[0] = 0xfe;
+    phtoleu32(buf + 1, (uint32_t)n);
+    return 5;
+  }
+  buf[0] = 0xff;
+  phtoleu64(buf + 1, n);
+  return 9;
+}
+
+/* Add a generated hash (displayed reversed) from a digest */
+static const char *
+dash_add_digest(proto_tree *tree, int hf, tvbuff_t *tvb, packet_info *pinfo, int offset, int len,
+                const uint8_t *buf, size_t buflen)
+{
+  uint8_t     first[DASH_HASH_LEN], digest[DASH_HASH_LEN], rev[DASH_HASH_LEN];
+  proto_item *ti;
+  int         i;
+
+  gcry_md_hash_buffer(GCRY_MD_SHA256, first, buf, buflen);
+  gcry_md_hash_buffer(GCRY_MD_SHA256, digest, first, DASH_HASH_LEN);
+  for (i = 0; i < DASH_HASH_LEN; i++)
+    rev[i] = digest[DASH_HASH_LEN - 1 - i];
+  ti = proto_tree_add_bytes_with_length(tree, hf, tvb, offset, len, rev, DASH_HASH_LEN);
+  proto_item_set_generated(ti);
+  return bytes_to_str_maxlen(pinfo->pool, rev, DASH_HASH_LEN, 0);
+}
+
+/*
+ * CompactSize-prefixed bytes with a read-side cap (LIMITED_VECTOR or an
+ * explicit size check in Dash Core).  Returns false, after flagging the
+ * length, if the declared length is above the cap (the peer would reject
+ * the message), in which case the caller should stop dissecting.
+ */
+static bool
+dash_add_limited_varbytes(proto_tree *tree, int hf, tvbuff_t *tvb, packet_info *pinfo, int *offset,
+                          uint64_t max)
+{
+  int         lenlen;
+  uint64_t    len = dash_get_compactsize(tvb, *offset, &lenlen);
+  proto_item *ti;
+
+  if (len <= max) {
+    dash_add_varbytes(tree, hf, tvb, offset);
+    return true;
+  }
+  ti = proto_tree_add_uint64(tree, hf_dash_varbytes_length, tvb, *offset, lenlen, len);
+  expert_add_info_format(pinfo, ti, &ei_dash_vector_too_long,
+                         "Length %" PRIu64 " exceeds the maximum of %" PRIu64, len, max);
+  *offset += lenlen;
+  return false;
+}
+
+/* True if the bytes are valid UTF-8 text without control characters
+ * (other than tab/CR/LF) */
+static bool
+dash_is_printable_text(const uint8_t *data, int len)
+{
+  int i;
+
+  if (len <= 0 || !g_utf8_validate((const char *)data, len, NULL))
+    return false;
+  for (i = 0; i < len; i++) {
+    uint8_t c = data[i];
+    if ((c < 0x20 && c != '\t' && c != '\n' && c != '\r') || c == 0x7f)
+      return false;
+  }
+  return true;
+}
+
+/* ------------------------------------------------------------------------
+ * Sporks, sync status, mnauth, flag messages
+ * ------------------------------------------------------------------------ */
+
+/* spork: CSporkMessage (spork.h:93-117) */
+static int
+dissect_dash_msg_spork(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+  int         offset = 0;
+  int32_t     id;
+  int64_t     value;
+  proto_item *ti;
+
+  id = dash_add_int(tree, hf_dash_spork_id, tvb, &offset, 4);
+  value = (int64_t)tvb_get_letoh64(tvb, offset);
+  ti = dash_add_item(tree, hf_dash_spork_value, tvb, &offset, 8, ENC_LITTLE_ENDIAN);
+  if (value == 4070908800LL)
+    proto_item_append_text(ti, " (OFF, default)");
+  /* IsSporkActive(): value (as seconds since epoch) < now (spork.cpp:163-169) */
+  ti = proto_tree_add_boolean(tree, hf_dash_spork_active, tvb, offset - 8, 8,
+                              value < (int64_t)pinfo->abs_ts.secs);
+  proto_item_set_generated(ti);
+  dash_add_item(tree, hf_dash_spork_time_signed, tvb, &offset, 8, ENC_TIME_SECS|ENC_LITTLE_ENDIAN);
+  /* LIMITED_VECTOR(vchSig, CPubKey::COMPACT_SIGNATURE_SIZE = 65) (spork.h:113-114) */
+  if (dash_add_limited_varbytes(tree, hf_dash_spork_sig, tvb, pinfo, &offset, 65)) {
+    /* MSG_SPORK inventory hash = SHA256d(full serialization) (spork.cpp:264-267) */
+    dash_add_computed_hash(tree, hf_dash_spork_hash, tvb, 0, offset);
+  }
+
+  col_append_fstr(pinfo->cinfo, COL_INFO, " (%s = %" PRId64 ")",
+                  val_to_str(pinfo->pool, (uint32_t)id, dash_spork_ids, "Unknown spork %d"), value);
+  return offset;
+}
+
+/* ssc: SYNCSTATUSCOUNT (net_governance.cpp:151,163; node/sync_manager.cpp:319-331) */
+static int
+dissect_dash_msg_ssc(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+  int     offset = 0;
+  int32_t item, count;
+
+  item  = dash_add_int(tree, hf_dash_ssc_item, tvb, &offset, 4);
+  count = dash_add_int(tree, hf_dash_ssc_count, tvb, &offset, 4);
+  col_append_fstr(pinfo->cinfo, COL_INFO, " (%s: %d)",
+                  val_to_str(pinfo->pool, (uint32_t)item, dash_ssc_items, "Unknown item %d"), count);
+  return offset;
+}
+
+/* mnauth: CMNAuth (evo/mnauth.h:46-56) */
+static int
+dissect_dash_msg_mnauth(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+  int offset = 0;
+
+  col_append_fstr(pinfo->cinfo, COL_INFO, " (proTx %s)",
+                  dash_rhash_str(pinfo->pool, tvb, offset, DASH_HASH_LEN));
+  dash_add_hash(tree, hf_dash_protx_hash, tvb, &offset);
+  dash_add_item(tree, hf_dash_mnauth_sig, tvb, &offset, DASH_BLS_SIG_LEN, ENC_NA);
+  return offset;
+}
+
+/* senddsq: bool (net_processing.cpp:4503-4515) */
+static int
+dissect_dash_msg_senddsq(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, void *data _U_)
+{
+  int offset = 0;
+  dash_add_item(tree, hf_dash_senddsq_enabled, tvb, &offset, 1, ENC_NA);
+  return offset;
+}
+
+/* qsendrecsigs: bool (net_processing.cpp:4518-4522) */
+static int
+dissect_dash_msg_qsendrecsigs(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, void *data _U_)
+{
+  int offset = 0;
+  dash_add_item(tree, hf_dash_qsendrecsigs_enabled, tvb, &offset, 1, ENC_NA);
+  return offset;
+}
+
+/* ------------------------------------------------------------------------
+ * CoinJoin
+ * ------------------------------------------------------------------------ */
+
+/* dsa: CCoinJoinAccept (coinjoin/coinjoin.h:137-178) */
+static int
+dissect_dash_msg_dsa(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data)
+{
+  static int * const flags[] = {
+    &hf_dash_dsa_flag_promotion,
+    &hf_dash_dsa_flag_demotion,
+    NULL
+  };
+  const dash_pinfo_t *dpi = (const dash_pinfo_t *)data;
+  int         offset = 0;
+  const char *denom;
+
+  denom  = dash_cj_add_denom(tree, hf_dash_dsa_denom, tvb, pinfo, &offset);
+  offset = dash_cj_add_collateral(tree, tvb, pinfo, offset, dpi);
+  col_append_fstr(pinfo->cinfo, COL_INFO, " (denom %s)", denom);
+
+  /* nFlags is serialized only if the stream version (the common version,
+   * net_processing.cpp:5943 / client.cpp:1673) >= COINJOIN_REBALANCE_VERSION
+   * (coinjoin.h:160-166) */
+  if (dpi && dpi->common_version >= DASH_COINJOIN_REBALANCE_VERSION) {
+    proto_item *ti;
+    uint8_t     f = tvb_get_uint8(tvb, offset);
+
+    ti = proto_tree_add_bitmask(tree, tvb, offset, hf_dash_dsa_flags, ett_dash_dsa_flags,
+                                flags, ENC_NA);
+    if ((f & 0x03) == 0x03)
+      expert_add_info(pinfo, ti, &ei_dash_dsa_flags_invalid);
+    else if (f & 0x01)
+      col_append_str(pinfo->cinfo, COL_INFO, " [promotion]");
+    else if (f & 0x02)
+      col_append_str(pinfo->cinfo, COL_INFO, " [demotion]");
+    offset += 1;
+  }
+  return offset;
+}
+
+/* dsi: CCoinJoinEntry - wire order vin, collateral, vout (coinjoin.h:203-221).
+ * CTxDSIn serializes exactly as CTxIn (coinjoin/common.h:20-36). */
+static int
+dissect_dash_msg_dsi(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data)
+{
+  const dash_pinfo_t *dpi = (const dash_pinfo_t *)data;
+  int      offset = 0;
+  uint64_t nin, nout, i;
+
+  nin = dash_add_compactsize(tree, hf_dash_dsi_in_count, tvb, &offset);
+  for (i = 0; i < nin; i++) {
+    DASH_LOOP_CHECK(tvb, offset);
+    offset = dissect_dash_txin(tree, tvb, pinfo, offset, (unsigned)i, dpi);
+  }
+  offset = dash_cj_add_collateral(tree, tvb, pinfo, offset, dpi);
+  nout = dash_add_compactsize(tree, hf_dash_dsi_out_count, tvb, &offset);
+  for (i = 0; i < nout; i++) {
+    DASH_LOOP_CHECK(tvb, offset);
+    offset = dissect_dash_txout(tree, hf_dash_dsi_out, tvb, pinfo, offset, (int)i, dpi);
+  }
+  col_append_fstr(pinfo->cinfo, COL_INFO, " (%" PRIu64 " in, %" PRIu64 " out)", nin, nout);
+  return offset;
+}
+
+/* dsf: int nSessionID + CTransaction (server.cpp:1314; client.cpp:110-113) */
+static int
+dissect_dash_msg_dsf(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data)
+{
+  int     offset = 0;
+  int32_t session;
+
+  session = dash_add_int(tree, hf_dash_dsf_session_id, tvb, &offset, 4);
+  offset = dissect_dash_tx(tree, tvb, pinfo, offset, -1, (const dash_pinfo_t *)data);
+  col_append_fstr(pinfo->cinfo, COL_INFO, " (session %d)", session);
+  return offset;
+}
+
+/* dss: std::vector<CTxIn> with signatures (client.cpp:608-626; server.cpp:254-259) */
+static int
+dissect_dash_msg_dss(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data)
+{
+  int      offset = 0;
+  uint64_t count, i;
+
+  count = dash_add_compactsize(tree, hf_dash_dss_in_count, tvb, &offset);
+  for (i = 0; i < count; i++) {
+    DASH_LOOP_CHECK(tvb, offset);
+    offset = dissect_dash_txin(tree, tvb, pinfo, offset, (unsigned)i, (const dash_pinfo_t *)data);
+  }
+  col_append_fstr(pinfo->cinfo, COL_INFO, " (%" PRIu64 " inputs)", count);
+  return offset;
+}
+
+/* dsc: int nSessionID + PoolMessage (server.cpp:1377; client.cpp:125-127) */
+static int
+dissect_dash_msg_dsc(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+  int     offset = 0;
+  int32_t session, msg;
+
+  session = dash_add_int(tree, hf_dash_dsc_session_id, tvb, &offset, 4);
+  msg     = dash_add_int(tree, hf_dash_dsc_message_id, tvb, &offset, 4);
+  col_append_fstr(pinfo->cinfo, COL_INFO, " (session %d, %s)", session,
+                  val_to_str(pinfo->pool, (uint32_t)msg, dash_cj_pool_messages, "message %d"));
+  return offset;
+}
+
+/* dssu: CCoinJoinStatusUpdate (coinjoin.h:113-135).  nEntriesCount is
+ * not serialized (coinjoin.h:131-134). */
+static int
+dissect_dash_msg_dssu(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+  int     offset = 0;
+  int32_t session, state, status, msg;
+
+  session = dash_add_int(tree, hf_dash_dssu_session_id, tvb, &offset, 4);
+  state   = dash_add_int(tree, hf_dash_dssu_state, tvb, &offset, 4);
+  status  = dash_add_int(tree, hf_dash_dssu_status, tvb, &offset, 4);
+  msg     = dash_add_int(tree, hf_dash_dssu_message_id, tvb, &offset, 4);
+  col_append_fstr(pinfo->cinfo, COL_INFO, " (session %d, %s, %s, %s)", session,
+                  val_to_str(pinfo->pool, (uint32_t)state, dash_cj_pool_states, "state %d"),
+                  val_to_str(pinfo->pool, (uint32_t)status, dash_cj_status_updates, "status %d"),
+                  val_to_str(pinfo->pool, (uint32_t)msg, dash_cj_pool_messages, "message %d"));
+  return offset;
+}
+
+/* dsq: CCoinJoinQueue (coinjoin.h:245-294, serialization 270-276).
+ * masternodeOutpoint is not on the wire. */
+static int
+dissect_dash_msg_dsq(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+  int         offset = 0;
+  const char *denom;
+  bool        ready;
+
+  denom = dash_cj_add_denom(tree, hf_dash_dsq_denom, tvb, pinfo, &offset);
+  dash_add_hash(tree, hf_dash_protx_hash, tvb, &offset);
+  dash_add_item(tree, hf_dash_dsq_time, tvb, &offset, 8, ENC_TIME_SECS|ENC_LITTLE_ENDIAN);
+  ready = tvb_get_uint8(tvb, offset) != 0;
+  dash_add_item(tree, hf_dash_dsq_ready, tvb, &offset, 1, ENC_NA);
+  dash_add_varbytes(tree, hf_dash_dsq_sig, tvb, &offset);
+  /* MSG_DSQ inventory hash = SHA256d(full serialization incl. vchSig) (coinjoin.cpp:47) */
+  dash_add_computed_hash(tree, hf_dash_dsq_hash, tvb, 0, offset);
+  col_append_fstr(pinfo->cinfo, COL_INFO, " (denom %s%s)", denom, ready ? ", ready" : "");
+  return offset;
+}
+
+/* dstx: CCoinJoinBroadcastTx (coinjoin.h:298-362, serialization 324-332) */
+static int
+dissect_dash_msg_dstx(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data)
+{
+  int offset = 0;
+
+  offset = dissect_dash_tx(tree, tvb, pinfo, offset, -1, (const dash_pinfo_t *)data);
+  dash_add_hash(tree, hf_dash_protx_hash, tvb, &offset);
+  dash_add_varbytes(tree, hf_dash_dstx_sig, tvb, &offset);
+  dash_add_item(tree, hf_dash_dstx_sig_time, tvb, &offset, 8, ENC_TIME_SECS|ENC_LITTLE_ENDIAN);
+  return offset;
+}
+
+/* ------------------------------------------------------------------------
+ * Governance
+ * ------------------------------------------------------------------------ */
+
+/* govsync: uint256 nProp + CBloomFilter (net_governance.cpp:86-169;
+ * CBloomFilter common/bloom.h:50-78) */
+static int
+dissect_dash_msg_govsync(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+  int         offset = 0;
+  proto_item *ti;
+  proto_tree *subtree;
+  bool        all;
+  uint64_t    flen;
+  int         lenlen;
+  const char *prop;
+
+  all  = tvb_memeql(tvb, offset, (const uint8_t *)"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"
+                                 "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", DASH_HASH_LEN) == 0;
+  prop = dash_rhash_str(pinfo->pool, tvb, offset, DASH_HASH_LEN);
+  ti = dash_add_hash(tree, hf_dash_govsync_prop_hash, tvb, &offset);
+  if (all)
+    proto_item_append_text(ti, " (all objects)");
+
+  flen = dash_get_compactsize(tvb, offset, &lenlen);
+  subtree = dash_subtree(tree, hf_dash_govsync_filter, ett_dash_govsync_filter, tvb, offset, &ti);
+  /* vData is capped at MAX_BLOOM_FILTER_SIZE = 36000 (common/bloom.h:20, 78) */
+  if (!dash_add_limited_varbytes(subtree, hf_dash_filter_data, tvb, pinfo, &offset, 36000)) {
+    proto_item_set_end(ti, tvb, offset);
+    return offset;
+  }
+  {
+    /* CBloomFilter::IsWithinSizeConstraints(), checked at net_governance.cpp:108 */
+    proto_item *hi = dash_add_item(subtree, hf_dash_filter_hash_funcs, tvb, &offset, 4, ENC_LITTLE_ENDIAN);
+    if (tvb_get_letohl(tvb, offset - 4) > 50)
+      expert_add_info(pinfo, hi, &ei_dash_govsync_hash_funcs);
+  }
+  dash_add_item(subtree, hf_dash_filter_tweak, tvb, &offset, 4, ENC_LITTLE_ENDIAN);
+  dash_add_item(subtree, hf_dash_filter_flags, tvb, &offset, 1, ENC_NA);
+  proto_item_set_end(ti, tvb, offset);
+  if (flen == 0)
+    proto_item_append_text(ti, " (empty)");
+
+  /* net_governance.cpp:115-167 */
+  if (all)
+    col_append_str(pinfo->cinfo, COL_INFO, " (all objects)");
+  else if (flen == 0)
+    col_append_fstr(pinfo->cinfo, COL_INFO, " (object %s)", prop);
+  else
+    col_append_fstr(pinfo->cinfo, COL_INFO, " (votes for %s)", prop);
+  return offset;
+}
+
+/* govobj: CGovernanceObject; on the network only Governance::Object m_obj
+ * (governance/object.h:294-316, governance/common.h:73-87) */
+static int
+dissect_dash_msg_govobj(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+  int         offset = 0;
+  int         lenlen, dlen, data_off, op_off, sig_off, sig_lenlen, siglen;
+  int32_t     type;
+  uint64_t    len;
+  proto_item *ti;
+
+  dash_add_hash(tree, hf_dash_govobj_parent_hash, tvb, &offset);
+  dash_add_int(tree, hf_dash_govobj_revision, tvb, &offset, 4);
+  dash_add_item(tree, hf_dash_govobj_time, tvb, &offset, 8, ENC_TIME_SECS|ENC_LITTLE_ENDIAN);
+  dash_add_hash(tree, hf_dash_govobj_collateral_hash, tvb, &offset);
+
+  /* vchData: raw bytes, normally a JSON object (common.cpp:46-49) */
+  len  = dash_get_compactsize(tvb, offset, &lenlen);
+  dlen = dash_check_len(tvb, offset + lenlen, len);
+  data_off = offset + lenlen;
+  ti = dash_add_varbytes(tree, hf_dash_govobj_data, tvb, &offset);
+  if (dlen > 0) {
+    const uint8_t *raw = tvb_get_ptr(tvb, data_off, dlen);
+    if (dash_is_printable_text(raw, dlen)) {
+      proto_tree *subtree = proto_item_get_subtree(ti);
+      proto_item *si;
+      const char *text = (const char *)tvb_get_string_enc(pinfo->pool, tvb, data_off, dlen, ENC_UTF_8);
+      bool        hex = (dlen % 2) == 0;
+      int         i;
+
+      for (i = 0; hex && i < dlen; i++)
+        hex = g_ascii_isxdigit(raw[i]);
+      si = proto_tree_add_string(subtree, hf_dash_govobj_data_text, tvb, data_off, dlen, text);
+      proto_item_set_generated(si);
+      /* Older tooling stored hex-encoded JSON in the data itself */
+      if (hex) {
+        uint8_t *dec = (uint8_t *)wmem_alloc(pinfo->pool, dlen / 2 + 1);
+        for (i = 0; i < dlen / 2; i++)
+          dec[i] = (uint8_t)((g_ascii_xdigit_value(raw[2 * i]) << 4) | g_ascii_xdigit_value(raw[2 * i + 1]));
+        dec[dlen / 2] = '\0';
+        if (dash_is_printable_text(dec, dlen / 2)) {
+          si = proto_tree_add_string(subtree, hf_dash_govobj_data_text, tvb, data_off, dlen, (const char *)dec);
+          proto_item_append_text(si, " (hex-decoded)");
+          proto_item_set_generated(si);
+        }
+      }
+    }
+  }
+
+  type = dash_add_int(tree, hf_dash_govobj_type, tvb, &offset, 4);
+  op_off = offset;
+  offset = dissect_dash_outpoint(tree, hf_dash_govobj_mn_outpoint, tvb, pinfo, offset);
+  sig_off = offset;
+  len = dash_get_compactsize(tvb, offset, &sig_lenlen);
+  /* LIMITED_VECTOR(vchSig, MAX_SIGNATURE_SIZE = 96) (governance/common.h:36, 84) */
+  if (!dash_add_limited_varbytes(tree, hf_dash_govobj_sig, tvb, pinfo, &offset, 96))
+    return offset;
+  siglen = (int)len;
+
+  /*
+   * Object hash (governance/common.cpp:23-38), "doesn't match serialization":
+   * SHA256d(hashParent || revision || time || HexStr(vchData) as string ||
+   *         masternodeOutpoint || uint8 0 || uint32 0xffffffff || vchSig)
+   */
+  {
+    static const char hexd[] = "0123456789abcdef";
+    size_t   cap = 32 + 4 + 8 + 9 + (size_t)dlen * 2 + 36 + 1 + 4 + 9 + (size_t)siglen;
+    uint8_t *buf = (uint8_t *)wmem_alloc(pinfo->pool, cap);
+    size_t   n = 0;
+    int      i;
+
+    tvb_memcpy(tvb, buf, 0, 32 + 4 + 8);
+    n = 32 + 4 + 8;
+    n += dash_put_compactsize(buf + n, (uint64_t)dlen * 2);
+    for (i = 0; i < dlen; i++) {
+      uint8_t b = tvb_get_uint8(tvb, data_off + i);
+      buf[n++] = hexd[b >> 4];
+      buf[n++] = hexd[b & 0x0f];
+    }
+    tvb_memcpy(tvb, buf + n, op_off, 36);
+    n += 36;
+    buf[n++] = 0;
+    phtoleu32(buf + n, 0xffffffff);
+    n += 4;
+    tvb_memcpy(tvb, buf + n, sig_off, sig_lenlen + siglen);
+    n += sig_lenlen + siglen;
+    col_append_fstr(pinfo->cinfo, COL_INFO, " (%s %s)",
+                    val_to_str(pinfo->pool, (uint32_t)type, dash_gov_object_types, "type %d"),
+                    dash_add_digest(tree, hf_dash_govobj_hash, tvb, pinfo, 0, offset, buf, n));
+  }
+  return offset;
+}
+
+/* govobjvote: CGovernanceVote (governance/vote.h:61-208, serialization 190-207).
+ * Note the wire order: outcome before signal. */
+static int
+dissect_dash_msg_govobjvote(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+  int         offset = 0;
+  int32_t     outcome, signal;
+  int         lenlen;
+  uint64_t    siglen;
+  proto_item *ti;
+
+  offset = dissect_dash_outpoint(tree, hf_dash_govvote_mn_outpoint, tvb, pinfo, offset);
+  dash_add_hash(tree, hf_dash_govvote_parent_hash, tvb, &offset);
+  outcome = dash_add_int(tree, hf_dash_govvote_outcome, tvb, &offset, 4);
+  signal  = dash_add_int(tree, hf_dash_govvote_signal, tvb, &offset, 4);
+  dash_add_item(tree, hf_dash_govvote_time, tvb, &offset, 8, ENC_TIME_SECS|ENC_LITTLE_ENDIAN);
+  siglen = dash_get_compactsize(tvb, offset, &lenlen);
+  if (siglen > DASH_BLS_SIG_LEN) {
+    /* LIMITED_VECTOR(vchSig, BLS_SIG_SIZE) on network reads (vote.h:197) */
+    dash_add_limited_varbytes(tree, hf_dash_govvote_sig, tvb, pinfo, &offset, DASH_BLS_SIG_LEN);
+    return offset;
+  }
+  ti = dash_add_varbytes(tree, hf_dash_govvote_sig, tvb, &offset);
+  /* vote.h:197-201: network reads require 65 (ECDSA) or 96 (BLS) bytes */
+  if (siglen == 65)
+    proto_item_append_text(ti, " (ECDSA, voting key)");
+  else if (siglen == 96)
+    proto_item_append_text(ti, " (BLS, operator key)");
+  else
+    expert_add_info(pinfo, ti, &ei_dash_govvote_sig_size);
+
+  /* Vote hash (vote.cpp:145-156): SHA256d(outpoint || uint8 0 || uint32 0xffffffff ||
+   * parentHash || signal || outcome || time) - signal before outcome */
+  {
+    uint8_t buf[36 + 1 + 4 + 32 + 4 + 4 + 8];
+
+    tvb_memcpy(tvb, buf, 0, 36);
+    buf[36] = 0;
+    phtoleu32(buf + 37, 0xffffffff);
+    tvb_memcpy(tvb, buf + 41, 36, 32);
+    phtoleu32(buf + 73, (uint32_t)signal);
+    phtoleu32(buf + 77, (uint32_t)outcome);
+    tvb_memcpy(tvb, buf + 81, 76, 8);
+    dash_add_digest(tree, hf_dash_govvote_hash, tvb, pinfo, 0, offset, buf, sizeof buf);
+  }
+
+  col_append_fstr(pinfo->cinfo, COL_INFO, " (%s %s)",
+                  val_to_str(pinfo->pool, (uint32_t)signal, dash_gov_vote_signals, "signal %d"),
+                  val_to_str(pinfo->pool, (uint32_t)outcome, dash_gov_vote_outcomes, "outcome %d"));
+  return offset;
+}
+
+/* ------------------------------------------------------------------------
+ * Registration
+ * ------------------------------------------------------------------------ */
+
+static void
+dash_register_coinjoin_gov(void)
+{
+  dash_add_command("spork",        dissect_dash_msg_spork);
+  dash_add_command("getsporks",    dissect_dash_msg_empty);
+  dash_add_command("ssc",          dissect_dash_msg_ssc);
+  dash_add_command("mnauth",       dissect_dash_msg_mnauth);
+  dash_add_command("senddsq",      dissect_dash_msg_senddsq);
+  dash_add_command("qsendrecsigs", dissect_dash_msg_qsendrecsigs);
+  dash_add_command("qwatch",       dissect_dash_msg_empty);
+
+  dash_add_command("dsa",          dissect_dash_msg_dsa);
+  dash_add_command("dsi",          dissect_dash_msg_dsi);
+  dash_add_command("dsf",          dissect_dash_msg_dsf);
+  dash_add_command("dss",          dissect_dash_msg_dss);
+  dash_add_command("dsc",          dissect_dash_msg_dsc);
+  dash_add_command("dssu",         dissect_dash_msg_dssu);
+  dash_add_command("dsq",          dissect_dash_msg_dsq);
+  dash_add_command("dstx",         dissect_dash_msg_dstx);
+
+  dash_add_command("govsync",      dissect_dash_msg_govsync);
+  dash_add_command("govobj",       dissect_dash_msg_govobj);
+  dash_add_command("govobjvote",   dissect_dash_msg_govobjvote);
+}
+
 void
 proto_register_dash(void)
 {
@@ -3136,6 +3939,276 @@ proto_register_dash(void)
       { "Salt", "dash.txrcncl.salt",
         FT_UINT64, BASE_HEX, NULL, 0x0,
         NULL, HFILL }
+    },
+    { &hf_dash_spork_id,
+      { "Spork ID", "dash.spork.id",
+        FT_INT32, BASE_DEC, VALS(dash_spork_ids), 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_spork_value,
+      { "Value", "dash.spork.value",
+        FT_INT64, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_spork_active,
+      { "Active at capture time", "dash.spork.active",
+        FT_BOOLEAN, BASE_NONE, NULL, 0x0,
+        "Spork value is lower than the frame time (CSporkManager::IsSporkActive)", HFILL }
+    },
+    { &hf_dash_spork_time_signed,
+      { "Time signed", "dash.spork.time_signed",
+        FT_ABSOLUTE_TIME, ABSOLUTE_TIME_UTC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_spork_sig,
+      { "Signature", "dash.spork.sig",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        "Compact ECDSA signature by the spork key", HFILL }
+    },
+    { &hf_dash_spork_hash,
+      { "Spork hash", "dash.spork.hash",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        "SHA256d of the message (MSG_SPORK inventory hash, computed)", HFILL }
+    },
+    { &hf_dash_ssc_item,
+      { "Item ID", "dash.ssc.item",
+        FT_INT32, BASE_DEC, VALS(dash_ssc_items), 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_ssc_count,
+      { "Count", "dash.ssc.count",
+        FT_INT32, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_mnauth_sig,
+      { "Signature", "dash.mnauth.sig",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        "BLS signature by the masternode operator key", HFILL }
+    },
+    { &hf_dash_senddsq_enabled,
+      { "Send DSQ", "dash.senddsq.enabled",
+        FT_BOOLEAN, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_qsendrecsigs_enabled,
+      { "Send recovered signatures", "dash.qsendrecsigs.enabled",
+        FT_BOOLEAN, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_coinjoin_denom_amount,
+      { "Denomination amount", "dash.coinjoin.denom_amount",
+        FT_INT64, BASE_CUSTOM, CF_FUNC(format_dash_amount), 0x0,
+        "Amount for the denomination bit (computed)", HFILL }
+    },
+    { &hf_dash_coinjoin_collateral,
+      { "Collateral transaction", "dash.coinjoin.collateral",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_dsa_denom,
+      { "Denomination", "dash.dsa.denom",
+        FT_UINT32, BASE_HEX, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_dsa_flags,
+      { "Flags", "dash.dsa.flags",
+        FT_UINT8, BASE_HEX, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_dsa_flag_promotion,
+      { "Promotion", "dash.dsa.flags.promotion",
+        FT_BOOLEAN, 8, TFS(&tfs_set_notset), 0x01,
+        NULL, HFILL }
+    },
+    { &hf_dash_dsa_flag_demotion,
+      { "Demotion", "dash.dsa.flags.demotion",
+        FT_BOOLEAN, 8, TFS(&tfs_set_notset), 0x02,
+        NULL, HFILL }
+    },
+    { &hf_dash_dsi_in_count,
+      { "Input count", "dash.dsi.in_count",
+        FT_UINT64, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_dsi_out_count,
+      { "Output count", "dash.dsi.out_count",
+        FT_UINT64, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_dsi_out,
+      { "Output", "dash.dsi.out",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_dsf_session_id,
+      { "Session ID", "dash.dsf.session_id",
+        FT_INT32, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_dss_in_count,
+      { "Input count", "dash.dss.in_count",
+        FT_UINT64, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_dsc_session_id,
+      { "Session ID", "dash.dsc.session_id",
+        FT_INT32, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_dsc_message_id,
+      { "Message", "dash.dsc.message_id",
+        FT_INT32, BASE_DEC, VALS(dash_cj_pool_messages), 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_dssu_session_id,
+      { "Session ID", "dash.dssu.session_id",
+        FT_INT32, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_dssu_state,
+      { "Pool state", "dash.dssu.state",
+        FT_INT32, BASE_DEC, VALS(dash_cj_pool_states), 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_dssu_status,
+      { "Status update", "dash.dssu.status",
+        FT_INT32, BASE_DEC, VALS(dash_cj_status_updates), 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_dssu_message_id,
+      { "Message", "dash.dssu.message_id",
+        FT_INT32, BASE_DEC, VALS(dash_cj_pool_messages), 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_dsq_denom,
+      { "Denomination", "dash.dsq.denom",
+        FT_UINT32, BASE_HEX, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_dsq_time,
+      { "Time", "dash.dsq.time",
+        FT_ABSOLUTE_TIME, ABSOLUTE_TIME_UTC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_dsq_ready,
+      { "Ready", "dash.dsq.ready",
+        FT_BOOLEAN, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_dsq_sig,
+      { "Signature", "dash.dsq.sig",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        "BLS signature by the masternode operator key", HFILL }
+    },
+    { &hf_dash_dsq_hash,
+      { "Queue hash", "dash.dsq.hash",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        "SHA256d of the message (MSG_DSQ inventory hash, computed)", HFILL }
+    },
+    { &hf_dash_dstx_sig,
+      { "Signature", "dash.dstx.sig",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        "BLS signature by the masternode operator key", HFILL }
+    },
+    { &hf_dash_dstx_sig_time,
+      { "Signature time", "dash.dstx.sig_time",
+        FT_ABSOLUTE_TIME, ABSOLUTE_TIME_UTC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_govsync_prop_hash,
+      { "Object hash", "dash.govsync.prop_hash",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        "Governance object hash (all zero = sync all objects)", HFILL }
+    },
+    { &hf_dash_govsync_filter,
+      { "Bloom filter", "dash.govsync.filter",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_govobj_parent_hash,
+      { "Parent hash", "dash.govobj.parent_hash",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_govobj_revision,
+      { "Revision", "dash.govobj.revision",
+        FT_INT32, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_govobj_time,
+      { "Time", "dash.govobj.time",
+        FT_ABSOLUTE_TIME, ABSOLUTE_TIME_UTC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_govobj_collateral_hash,
+      { "Collateral hash", "dash.govobj.collateral_hash",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        "Fee transaction ID", HFILL }
+    },
+    { &hf_dash_govobj_data,
+      { "Data", "dash.govobj.data",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_govobj_data_text,
+      { "Data (text)", "dash.govobj.data_text",
+        FT_STRING, BASE_NONE, NULL, 0x0,
+        "Object data decoded as text (normally JSON)", HFILL }
+    },
+    { &hf_dash_govobj_type,
+      { "Object type", "dash.govobj.type",
+        FT_INT32, BASE_DEC, VALS(dash_gov_object_types), 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_govobj_mn_outpoint,
+      { "Masternode outpoint", "dash.govobj.mn_outpoint",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_govobj_sig,
+      { "Signature", "dash.govobj.sig",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_govobj_hash,
+      { "Object hash", "dash.govobj.hash",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        "Governance object hash (MSG_GOVERNANCE_OBJECT inventory hash, computed)", HFILL }
+    },
+    { &hf_dash_govvote_mn_outpoint,
+      { "Masternode outpoint", "dash.govobjvote.mn_outpoint",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_govvote_parent_hash,
+      { "Parent hash", "dash.govobjvote.parent_hash",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        "Hash of the governance object voted on", HFILL }
+    },
+    { &hf_dash_govvote_outcome,
+      { "Vote outcome", "dash.govobjvote.outcome",
+        FT_INT32, BASE_DEC, VALS(dash_gov_vote_outcomes), 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_govvote_signal,
+      { "Vote signal", "dash.govobjvote.signal",
+        FT_INT32, BASE_DEC, VALS(dash_gov_vote_signals), 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_govvote_time,
+      { "Time", "dash.govobjvote.time",
+        FT_ABSOLUTE_TIME, ABSOLUTE_TIME_UTC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_govvote_sig,
+      { "Signature", "dash.govobjvote.sig",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        "65-byte compact ECDSA (voting key) or 96-byte BLS (operator key)", HFILL }
+    },
+    { &hf_dash_govvote_hash,
+      { "Vote hash", "dash.govobjvote.hash",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        "Vote hash (MSG_GOVERNANCE_OBJECT_VOTE inventory hash, computed)", HFILL }
     },/* END GENERATED HF_REG */
   };
 
@@ -3164,7 +4237,11 @@ proto_register_dash(void)
     &ett_dash_inv_entry,
     &ett_dash_headers_entry,
     &ett_dash_hdr2_flags,
-    &ett_dash_cmpct_prefilled,/* END GENERATED ETT_REG */
+    &ett_dash_cmpct_prefilled,
+    &ett_dash_dsa_flags,
+    &ett_dash_coinjoin_collateral,
+    &ett_dash_govsync_filter,
+    &ett_dash_govobj_data,/* END GENERATED ETT_REG */
   };
 
   static ei_register_info ei[] = {
@@ -3173,7 +4250,12 @@ proto_register_dash(void)
     { &ei_dash_trailing_data, { "dash.trailing_data", PI_MALFORMED, PI_WARN, "Unexpected data after the end of the message", EXPFILL } },
     { &ei_dash_payload_trailing, { "dash.tx.payload.trailing", PI_MALFORMED, PI_WARN, "Unexpected data after the end of the special transaction payload", EXPFILL } },
     { &ei_dash_address_length, { "dash.service.addr_len.invalid", PI_MALFORMED, PI_WARN, "Address length does not match network type", EXPFILL } },
-    { &ei_dash_hdr2_version, { "dash.headers2.version.unknown", PI_PROTOCOL, PI_WARN, "Version offset refers to an unknown version", EXPFILL } },/* END GENERATED EI_REG */
+    { &ei_dash_hdr2_version, { "dash.headers2.version.unknown", PI_PROTOCOL, PI_WARN, "Version offset refers to an unknown version", EXPFILL } },
+    { &ei_dash_coinjoin_denom_invalid, { "dash.coinjoin.denom.invalid", PI_PROTOCOL, PI_WARN, "Not a valid CoinJoin denomination (exactly one of the 5 lowest bits must be set)", EXPFILL } },
+    { &ei_dash_dsa_flags_invalid, { "dash.dsa.flags.invalid", PI_PROTOCOL, PI_WARN, "Promotion and demotion flags are both set", EXPFILL } },
+    { &ei_dash_govvote_sig_size, { "dash.govobjvote.sig.bad_size", PI_MALFORMED, PI_WARN, "Vote signature must be 65 or 96 bytes", EXPFILL } },
+    { &ei_dash_vector_too_long, { "dash.vector_too_long", PI_MALFORMED, PI_ERROR, "Vector length exceeds the limit enforced by Dash Core", EXPFILL } },
+    { &ei_dash_govsync_hash_funcs, { "dash.govsync.filter.hash_funcs.too_many", PI_PROTOCOL, PI_WARN, "Number of hash functions exceeds MAX_HASH_FUNCS (50); the filter is rejected", EXPFILL } },/* END GENERATED EI_REG */
   };
 
   module_t        *dash_module;
@@ -3254,6 +4336,7 @@ proto_reg_handoff_dash(void)
   dash_add_command("sendheaders",  dissect_dash_msg_empty);
   dash_add_command("sendheaders2", dissect_dash_msg_empty);
 
+  dash_register_coinjoin_gov();
 }
 
 /*
