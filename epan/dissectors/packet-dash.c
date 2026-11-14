@@ -691,6 +691,8 @@ static expert_field ei_dash_checksum_bad;
 static expert_field ei_dash_trailing_data;
 static expert_field ei_dash_payload_trailing;
 static expert_field ei_dash_address_length;
+static expert_field ei_dash_cmpct_index;
+static expert_field ei_dash_bitset_padding;
 static expert_field ei_dash_hdr2_version;
 static expert_field ei_dash_coinjoin_denom_invalid;
 static expert_field ei_dash_dsa_flags_invalid;
@@ -718,7 +720,8 @@ static unsigned dash_default_version = DASH_PROTOCOL_VERSION;
 typedef struct {
   address  addr[2];
   uint32_t port[2];
-  uint32_t version[2];
+  uint32_t version[2];        /* first version announced by each side */
+  uint32_t version_frame[2];  /* frame that carried it */
 } dash_conv_t;
 
 /* Information handed from the framing dissector to the command dissectors */
@@ -819,6 +822,29 @@ dash_check_len(tvbuff_t *tvb, int offset, uint64_t length)
   if (length > (uint64_t)tvb_reported_length_remaining(tvb, offset))
     THROW(ReportedBoundsError);
   return (int)length;
+}
+
+/* count elements of elem_size bytes must fit in what is left (no overflow) */
+static void
+dash_check_count(tvbuff_t *tvb, int offset, uint64_t count, int elem_size)
+{
+  if (count > (uint64_t)tvb_reported_length_remaining(tvb, offset) / (uint64_t)elem_size)
+    THROW(ReportedBoundsError);
+}
+
+/* Member index lists (bitsets) are shown up to this many entries */
+#define DASH_MAX_MEMBERS_SHOWN 64
+
+/* Append an index to a member list; sb is NULL when there is no tree */
+static void
+dash_members_append(wmem_strbuf_t *sb, unsigned nset, uint64_t idx)
+{
+  if (sb == NULL)
+    return;
+  if (nset < DASH_MAX_MEMBERS_SHOWN)
+    wmem_strbuf_append_printf(sb, nset ? ",%" PRIu64 : "%" PRIu64, idx);
+  else if (nset == DASH_MAX_MEMBERS_SHOWN)
+    wmem_strbuf_append(sb, ",\u2026");
 }
 
 /*
@@ -1195,20 +1221,23 @@ dissect_dash_bitset(proto_tree *tree, int hf, tvbuff_t *tvb, packet_info *pinfo,
         nbytes ? tvb_get_ptr(tvb, offset + lenlen, nbytes) : NULL, nbytes);
   subtree = proto_item_add_subtree(ti, ett_dash_bitset);
   proto_tree_add_uint64(subtree, hf_dash_bitset_size, tvb, offset, lenlen, nbits);
-  members = wmem_strbuf_new(pinfo->pool, "");
+  members = tree ? wmem_strbuf_new(pinfo->pool, "") : NULL;
   for (i = 0; i < (int)nbits; i++) {
     if (tvb_get_uint8(tvb, offset + lenlen + i / 8) & (1 << (i % 8))) {
-      if (set)
-        wmem_strbuf_append_c(members, ',');
-      wmem_strbuf_append_printf(members, "%d", i);
+      dash_members_append(members, set, (uint64_t)i);
       set++;
     }
   }
+  /* DYNBITSET readers reject set padding bits (serialize.h:470-476) */
+  if (nbits % 8 && (tvb_get_uint8(tvb, offset + lenlen + nbytes - 1) & (uint8_t)~(0xffU >> (8 - nbits % 8))))
+    expert_add_info(pinfo, ti, &ei_dash_bitset_padding);
   ti = proto_tree_add_uint(subtree, hf_dash_bitset_count, tvb, offset + lenlen, nbytes, set);
   proto_item_set_generated(ti);
-  ti = proto_tree_add_string(subtree, hf_dash_bitset_members, tvb, offset + lenlen, nbytes,
-                             wmem_strbuf_get_str(members));
-  proto_item_set_generated(ti);
+  if (members) {
+    ti = proto_tree_add_string(subtree, hf_dash_bitset_members, tvb, offset + lenlen, nbytes,
+                               wmem_strbuf_get_str(members));
+    proto_item_set_generated(ti);
+  }
   proto_item_append_text(proto_tree_get_parent(subtree), " (%u of %" PRIu64 " set)", set, nbits);
   return offset + lenlen + nbytes;
 }
@@ -1817,8 +1846,14 @@ dissect_dash_msg_version(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, vo
   const char   *agent;
 
   version = dash_add_uint(tree, hf_dash_version_version, tvb, &offset, 4);
-  if (dpi && dpi->conv && !PINFO_FD_VISITED(pinfo))
-    dpi->conv->version[dash_conv_direction(dpi->conv, pinfo)] = version;
+  /* Dash Core ignores a repeated version message from a peer */
+  if (dpi && dpi->conv && !PINFO_FD_VISITED(pinfo)) {
+    int dir = dash_conv_direction(dpi->conv, pinfo);
+    if (dpi->conv->version[dir] == 0) {
+      dpi->conv->version[dir] = version;
+      dpi->conv->version_frame[dir] = pinfo->num;
+    }
+  }
   proto_tree_add_bitmask(tree, tvb, offset, hf_dash_services, ett_dash_services,
                          dash_services_flags, ENC_LITTLE_ENDIAN);
   offset += 8;
@@ -2006,7 +2041,12 @@ dissect_dash_msg_headers2(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, v
       memmove(&versions[1], &versions[0], nversions * sizeof(versions[0]));
       versions[0] = version;
       nversions++;
-    } else if (i > 0 && voff <= nversions) {
+    } else if (i == 0) {
+      /* Uncompress() saves the (absent, zero) version of the first header */
+      versions[0] = 0;
+      nversions = 1;
+      proto_tree_add_expert(subtree, pinfo, &ei_dash_hdr2_version, tvb, offset - 1, 1);
+    } else if (voff <= nversions) {
       version = versions[voff - 1];
       for (j = voff - 1; j > 0; j--)
         versions[j] = versions[j - 1];
@@ -2150,6 +2190,11 @@ dissect_dash_msg_cmpctblock(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
     DASH_LOOP_CHECK(tvb, offset);
     subtree = dash_subtree(tree, hf_dash_cmpct_prefilled, ett_dash_cmpct_prefilled, tvb, offset, &ti);
     diff = dash_add_compactsize(subtree, hf_dash_cmpct_index_diff, tvb, &offset);
+    /* indexes are uint16 (blockencodings.cpp:72) */
+    if (diff > (uint64_t)(0xffff - (last + 1))) {
+      proto_tree_add_expert(subtree, pinfo, &ei_dash_cmpct_index, tvb, offset, 0);
+      THROW(ReportedBoundsError);
+    }
     last = last + (int64_t)diff + 1;
     gi = proto_tree_add_uint64(subtree, hf_dash_cmpct_index, tvb, offset, 0, (uint64_t)last);
     proto_item_set_generated(gi);
@@ -2160,7 +2205,7 @@ dissect_dash_msg_cmpctblock(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
 }
 
 static int
-dissect_dash_msg_getblocktxn(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, void *data _U_)
+dissect_dash_msg_getblocktxn(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
 {
   int      offset = 0;
   uint64_t count, i;
@@ -2174,6 +2219,11 @@ dissect_dash_msg_getblocktxn(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *
 
     DASH_LOOP_CHECK(tvb, offset);
     diff = dash_add_compactsize(tree, hf_dash_cmpct_index_diff, tvb, &offset);
+    /* DifferenceFormatter rejects indexes beyond uint16 (blockencodings.h:22-42) */
+    if (diff > (uint64_t)(0xffff - (last + 1))) {
+      proto_tree_add_expert(tree, pinfo, &ei_dash_cmpct_index, tvb, offset, 0);
+      THROW(ReportedBoundsError);
+    }
     last = last + (int64_t)diff + 1;
     gi = proto_tree_add_uint64(tree, hf_dash_cmpct_index, tvb, offset, 0, (uint64_t)last);
     proto_item_set_generated(gi);
@@ -2331,9 +2381,15 @@ dissect_dash_tcp_pdu(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *
     conversation_add_proto_data(conversation, proto_dash, dpi.conv);
   }
   {
-    uint32_t v0 = dpi.conv->version[0] ? dpi.conv->version[0] : dash_default_version;
-    uint32_t v1 = dpi.conv->version[1] ? dpi.conv->version[1] : dash_default_version;
-    dpi.common_version = MIN(v0, v1);
+    /* Only versions announced at or before this frame apply, so every pass
+     * dissects a frame the same way. */
+    uint32_t v[2];
+    int      d;
+
+    for (d = 0; d < 2; d++)
+      v[d] = (dpi.conv->version[d] && dpi.conv->version_frame[d] <= pinfo->num) ?
+             dpi.conv->version[d] : dash_default_version;
+    dpi.common_version = MIN(v[0], v[1]);
   }
 
   col_append_sep_str(pinfo->cinfo, COL_INFO, ", ", (const char *)command);
@@ -3270,7 +3326,7 @@ dissect_dash_vvec(proto_tree *tree, tvbuff_t *tvb, int offset)
 
   subtree = dash_subtree(tree, hf_dash_vvec, ett_dash_vvec, tvb, offset, &ti);
   count = dash_add_compactsize(subtree, hf_dash_vvec_count, tvb, &offset);
-  dash_check_len(tvb, offset, count * DASH_BLS_PUBKEY_LEN);
+  dash_check_count(tvb, offset, count, DASH_BLS_PUBKEY_LEN);
   for (i = 0; i < count; i++) {
     proto_item *pk = dash_add_item(subtree, hf_dash_vvec_pubkey, tvb, &offset, DASH_BLS_PUBKEY_LEN, ENC_NA);
     proto_item_prepend_text(pk, "[%" PRIu64 "] ", i);
@@ -3380,7 +3436,7 @@ dissect_dash_msg_qjustify(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, v
 
   offset = dissect_dash_dkg_prefix(tree, tvb, pinfo, offset);
   count = dash_add_compactsize(tree, hf_dash_qjustify_count, tvb, &offset);
-  dash_check_len(tvb, offset, count * DASH_QJUSTIFY_CONTRIB_LEN);
+  dash_check_count(tvb, offset, count, DASH_QJUSTIFY_CONTRIB_LEN);
   for (i = 0; i < count; i++) {
     proto_item *ti;
     proto_tree *subtree;
@@ -3469,8 +3525,8 @@ dissect_dash_msg_qsigrec(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, vo
   dash_add_item(tree, hf_dash_sig_recovered, tvb, &offset, DASH_BLS_SIG_LEN, ENC_NA);
   /* inv hash: SerializeHash(*this) (signing.h:90-93) */
   dash_llmq_add_hash_of(tree, hf_dash_llmq_inv_hash, tvb, pinfo, NULL, 0, 0, offset);
-  col_append_fstr(pinfo->cinfo, COL_INFO, " (%s, id %s)", dash_llmq_type_str(type),
-                  dash_rhash_str(pinfo->pool, tvb, 33, 4));
+  col_append_fstr(pinfo->cinfo, COL_INFO, " (%s, id %.16s\u2026)", dash_llmq_type_str(type),
+                  dash_rhash_str(pinfo->pool, tvb, 33, DASH_HASH_LEN));
   return offset;
 }
 
@@ -3516,7 +3572,7 @@ dissect_dash_autobitset(proto_tree *tree, tvbuff_t *tvb, packet_info *pinfo, int
 {
   proto_item    *mi, *ti;
   proto_tree    *subtree = NULL;
-  wmem_strbuf_t *members = wmem_strbuf_new(pinfo->pool, "");
+  wmem_strbuf_t *members = tree ? wmem_strbuf_new(pinfo->pool, "") : NULL;
   uint32_t       mode;
   unsigned       set = 0;
   int            start;
@@ -3527,16 +3583,19 @@ dissect_dash_autobitset(proto_tree *tree, tvbuff_t *tvb, packet_info *pinfo, int
   *nset = 0;
 
   if (mode == 0) {
-    int      nbytes = dash_check_len(tvb, offset, (size + 7) / 8);
+    int      nbytes;
     uint64_t i;
+
+    /* bound the bit count before rounding up so a huge size cannot wrap */
+    if (size > (uint64_t)tvb_reported_length_remaining(tvb, offset) * 8)
+      THROW(ReportedBoundsError);
+    nbytes = dash_check_len(tvb, offset, (size + 7) / 8);
 
     ti = proto_tree_add_item(tree, hf_dash_sig_inv_bits, tvb, offset, nbytes, ENC_NA);
     subtree = proto_item_add_subtree(ti, ett_dash_sig_inv_bits);
     for (i = 0; i < size; i++) {
       if (tvb_get_uint8(tvb, offset + (int)(i / 8)) & (1 << (i % 8))) {
-        if (set)
-          wmem_strbuf_append_c(members, ',');
-        wmem_strbuf_append_printf(members, "%" PRIu64, i);
+        dash_members_append(members, set, i);
         set++;
       }
     }
@@ -3570,9 +3629,7 @@ dissect_dash_autobitset(proto_tree *tree, tvbuff_t *tvb, packet_info *pinfo, int
         expert_add_info(pinfo, oi, &ei_dash_sig_inv_index);
         break;
       }
-      if (set)
-        wmem_strbuf_append_c(members, ',');
-      wmem_strbuf_append_printf(members, "%" PRIu64, idx);
+      dash_members_append(members, set, idx);
       set++;
       last = idx;
       have_last = true;
@@ -3585,10 +3642,12 @@ dissect_dash_autobitset(proto_tree *tree, tvbuff_t *tvb, packet_info *pinfo, int
 
   ti = proto_tree_add_uint(subtree, hf_dash_bitset_count, tvb, start, offset - start, set);
   proto_item_set_generated(ti);
-  ti = proto_tree_add_string(subtree, hf_dash_bitset_members, tvb, start, offset - start,
-                             wmem_strbuf_get_str(members));
-  proto_item_set_generated(ti);
-  if (set)
+  if (members) {
+    ti = proto_tree_add_string(subtree, hf_dash_bitset_members, tvb, start, offset - start,
+                               wmem_strbuf_get_str(members));
+    proto_item_set_generated(ti);
+  }
+  if (set && members)
     proto_item_append_text(proto_tree_get_parent(subtree), " (%u of %" PRIu64 " set: %s)", set, size,
                            wmem_strbuf_get_str(members));
   else
@@ -3655,7 +3714,7 @@ dissect_dash_msg_qbsigs(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, voi
     subtree = dash_subtree(tree, hf_dash_sig_batch, ett_dash_sig_batch, tvb, offset, &ti);
     sid = dash_add_session_id(subtree, tvb, &offset);
     n = dash_add_compactsize(subtree, hf_dash_sig_batch_count, tvb, &offset);
-    dash_check_len(tvb, offset, n * (2 + DASH_BLS_SIG_LEN));
+    dash_check_count(tvb, offset, n, (2 + DASH_BLS_SIG_LEN));
     for (j = 0; j < n; j++) {
       proto_item *si;
       proto_tree *stree;
@@ -3685,7 +3744,7 @@ dissect_dash_msg_qsigshare(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, 
 
   count = dash_add_compactsize(tree, hf_dash_sig_count, tvb, &offset);
   col_append_fstr(pinfo->cinfo, COL_INFO, " (%" PRIu64 ")", count);
-  dash_check_len(tvb, offset, count * DASH_SIGSHARE_LEN);
+  dash_check_count(tvb, offset, count, DASH_SIGSHARE_LEN);
   for (i = 0; i < count; i++) {
     proto_item *ti;
     proto_tree *subtree;
@@ -3742,7 +3801,7 @@ dissect_dash_msg_isdlock(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, vo
   dash_add_item(tree, hf_dash_isdlock_version, tvb, &offset, 1, ENC_NA);
   inputs_start = offset;
   count = dash_add_compactsize(tree, hf_dash_isdlock_input_count, tvb, &offset);
-  dash_check_len(tvb, offset, count * 36);
+  dash_check_count(tvb, offset, count, 36);
   for (i = 0; i < count; i++)
     offset = dissect_dash_outpoint(tree, hf_dash_isdlock_input, tvb, pinfo, offset);
   dash_llmq_add_hash_of(tree, hf_dash_isdlock_request_id, tvb, pinfo, prefix, (int)sizeof(prefix),
@@ -3935,15 +3994,6 @@ static const value_string dash_qsnap_skip_modes[] = {
   { 0, NULL }
 };
 
-/* count elements of elem_size bytes must fit in the rest of the tvb
- * (overflow-safe version of dash_check_len(count * elem_size)) */
-static void
-dash_mnl_check_count(tvbuff_t *tvb, int offset, uint64_t count, int elem_size)
-{
-  if (count > (uint64_t)tvb_reported_length_remaining(tvb, offset) / (uint64_t)elem_size)
-    THROW(ReportedBoundsError);
-}
-
 /* ------------------------------------------------------------------------
  * CPartialMerkleTree (merkleblock.h:88-96, merkleblock.cpp)
  * ------------------------------------------------------------------------ */
@@ -4050,7 +4100,7 @@ dissect_dash_partial_merkle_tree(proto_tree *tree, tvbuff_t *tvb, packet_info *p
   subtree = dash_subtree(tree, hf_dash_pmt, ett_dash_pmt, tvb, offset, &ti);
   st.ntx = dash_add_uint(subtree, hf_dash_pmt_tx_count, tvb, &offset, 4);
   nhashes = dash_add_compactsize(subtree, hf_dash_pmt_hash_count, tvb, &offset);
-  dash_mnl_check_count(tvb, offset, nhashes, DASH_HASH_LEN);
+  dash_check_count(tvb, offset, nhashes, DASH_HASH_LEN);
   st.hash_off = offset;
   st.nhashes = (unsigned)nhashes;
   for (i = 0; i < nhashes; i++)
@@ -4201,7 +4251,7 @@ dissect_dash_mnlistdiff_body(proto_tree *tree, int hf, const char *label, tvbuff
   list_start = offset;
   n_deleted_mns = count = dash_add_compactsize(subtree, hf_dash_mnlistdiff_deleted_mn_count, tvb, &offset);
   if (count) {
-    dash_mnl_check_count(tvb, offset, count, DASH_HASH_LEN);
+    dash_check_count(tvb, offset, count, DASH_HASH_LEN);
     ltree = dash_subtree(subtree, hf_dash_mnlistdiff_deleted_mns, ett_dash_mnlistdiff_list, tvb, list_start, &lti);
     for (i = 0; i < count; i++)
       dash_add_hash(ltree, hf_dash_mnlistdiff_deleted_mn, tvb, &offset);
@@ -4226,7 +4276,7 @@ dissect_dash_mnlistdiff_body(proto_tree *tree, int hf, const char *label, tvbuff
   list_start = offset;
   n_deleted_q = count = dash_add_compactsize(subtree, hf_dash_mnlistdiff_deleted_quorum_count, tvb, &offset);
   if (count) {
-    dash_mnl_check_count(tvb, offset, count, (1 + DASH_HASH_LEN));
+    dash_check_count(tvb, offset, count, (1 + DASH_HASH_LEN));
     ltree = dash_subtree(subtree, hf_dash_mnlistdiff_deleted_quorums, ett_dash_mnlistdiff_list, tvb, list_start, &lti);
     for (i = 0; i < count; i++) {
       proto_item *qti;
@@ -4275,7 +4325,7 @@ dissect_dash_mnlistdiff_body(proto_tree *tree, int hf, const char *label, tvbuff
         ctree = dash_subtree(ltree, hf_dash_mnlistdiff_clsig_entry, ett_dash_mnlistdiff_clsig, tvb, offset, &cti);
         dash_add_item(ctree, hf_dash_mnlistdiff_clsig, tvb, &offset, DASH_BLS_SIG_LEN, ENC_NA);
         nidx = dash_add_compactsize(ctree, hf_dash_mnlistdiff_clsig_index_count, tvb, &offset);
-        dash_mnl_check_count(tvb, offset, nidx, 2);
+        dash_check_count(tvb, offset, nidx, 2);
         for (j = 0; j < nidx; j++) {
           uint32_t qidx = dash_add_uint(ctree, hf_dash_mnlistdiff_clsig_index, tvb, &offset, 2);
           wmem_strbuf_append_printf(idxs, "%s%u", j ? "," : "", qidx);
@@ -4322,7 +4372,7 @@ dissect_dash_quorum_snapshot(proto_tree *tree, const char *label, tvbuff_t *tvb,
   /* WriteCompactSize + WriteFixedBitSet == DYNBITSET */
   offset = dissect_dash_bitset(subtree, hf_dash_qsnap_active_members, tvb, pinfo, offset);
   count = dash_add_compactsize(subtree, hf_dash_qsnap_skip_count, tvb, &offset);
-  dash_mnl_check_count(tvb, offset, count, 4);
+  dash_check_count(tvb, offset, count, 4);
   for (i = 0; i < count; i++) {
     int32_t v = dash_add_int(subtree, hf_dash_qsnap_skip_entry, tvb, &offset, 4);
     if (i < 16)
@@ -4378,7 +4428,7 @@ dissect_dash_msg_getqrinfo(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, 
   offset += lenlen;
   if (count > DASH_MAX_BASE_BLOCK_HASHES)
     expert_add_info(pinfo, cti, &ei_dash_getqrinfo_too_many_bases);
-  dash_mnl_check_count(tvb, offset, count, DASH_HASH_LEN);
+  dash_check_count(tvb, offset, count, DASH_HASH_LEN);
   for (i = 0; i < count; i++)
     dash_add_hash(tree, hf_dash_getqrinfo_base_hash, tvb, &offset);
   col_append_fstr(pinfo->cinfo, COL_INFO, " (block %s, %" PRIu64 " bases",
@@ -6311,6 +6361,8 @@ proto_register_dash(void)
     { &ei_dash_trailing_data, { "dash.trailing_data", PI_MALFORMED, PI_WARN, "Unexpected data after the end of the message", EXPFILL } },
     { &ei_dash_payload_trailing, { "dash.tx.payload.trailing", PI_MALFORMED, PI_WARN, "Unexpected data after the end of the special transaction payload", EXPFILL } },
     { &ei_dash_address_length, { "dash.service.addr_len.invalid", PI_MALFORMED, PI_WARN, "Address length does not match network type", EXPFILL } },
+    { &ei_dash_cmpct_index, { "dash.cmpct.index.invalid", PI_MALFORMED, PI_ERROR, "Index exceeds the maximum block transaction index (65535)", EXPFILL } },
+    { &ei_dash_bitset_padding, { "dash.bitset.padding", PI_MALFORMED, PI_WARN, "Padding bits after the last bit are set (rejected by Dash Core)", EXPFILL } },
     { &ei_dash_hdr2_version, { "dash.headers2.version.unknown", PI_PROTOCOL, PI_WARN, "Version offset refers to an unknown version", EXPFILL } },
     { &ei_dash_coinjoin_denom_invalid, { "dash.coinjoin.denom.invalid", PI_PROTOCOL, PI_WARN, "Not a valid CoinJoin denomination (exactly one of the 5 lowest bits must be set)", EXPFILL } },
     { &ei_dash_dsa_flags_invalid, { "dash.dsa.flags.invalid", PI_PROTOCOL, PI_WARN, "Promotion and demotion flags are both set", EXPFILL } },
