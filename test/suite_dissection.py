@@ -812,6 +812,57 @@ class TestDissectTcp:
             encoding='utf-8', env=test_env)
         assert stdout == '2\t16\n'
 
+class TestDissectDash:
+    # One complete message of each command, taken from captures of Dash Core
+    # v24.0.1 functional tests (regtest, v1 transport).  Some test ports are
+    # claimed by other dissectors, so try heuristics first.
+    tshark_args = ('-otcp.try_heuristic_first:TRUE',)
+    commands = {
+        'addr', 'addrv2', 'block', 'blocktxn', 'cfcheckpt', 'cfilter', 'clsig', 'cmpctblock',
+        'dsa', 'dsc', 'dsf', 'dsi', 'dsq', 'dss', 'dssu', 'dstx',
+        'filteradd', 'filterclear', 'filterload', 'getaddr', 'getblocks', 'getblocktxn', 'getcfcheckpt', 'getcfheaders',
+        'getcfilters', 'getdata', 'getheaders', 'getheaders2', 'getmnlistd', 'getsporks', 'govobj', 'govobjvote',
+        'govsync', 'headers', 'headers2', 'inv', 'isdlock', 'mempool', 'merkleblock', 'mnauth',
+        'mnlistdiff', 'notfound', 'ping', 'platformban', 'pong', 'qbsigs', 'qcomplaint', 'qcontrib',
+        'qdata', 'qfcommit', 'qgetdata', 'qgetsigs', 'qjustify', 'qpcommit', 'qrinfo', 'qsendrecsigs',
+        'qsigrec', 'qsigsesann', 'qsigshare', 'qsigsinv', 'qwatch', 'sendaddrv2', 'sendcmpct', 'senddsq',
+        'sendheaders', 'sendheaders2', 'sendtxrcncl', 'spork', 'ssc', 'tx', 'verack', 'version',
+    }
+
+    def run(self, cmd_tshark, capture_file, test_env, *args):
+        return subprocess.check_output((cmd_tshark,
+                '-r', capture_file('dash-p2p.pcap'),
+            ) + self.tshark_args + args, encoding='utf-8', env=test_env)
+
+    def test_dash_commands(self, cmd_tshark, capture_file, test_env):
+        '''Every message is recognised and dissected without errors.'''
+        stdout = self.run(cmd_tshark, capture_file, test_env,
+                '-Ydash', '-Tfields', '-edash.command')
+        seen = set()
+        for line in stdout.splitlines():
+            seen.update(line.split(','))
+        assert seen == self.commands
+        stdout = self.run(cmd_tshark, capture_file, test_env,
+                '-Y_ws.malformed || dash.trailing_data || dash.checksum.bad || dash.command.unknown')
+        assert stdout.strip() == ''
+
+    def test_dash_version(self, cmd_tshark, capture_file, test_env):
+        stdout = self.run(cmd_tshark, capture_file, test_env,
+                '-Ydash.command == "version"', '-Tfields',
+                '-edash.version.version', '-edash.version.user_agent')
+        assert grep_output(stdout, r'^70242\t/python-p2p-tester:0.0.3/$')
+
+    def test_dash_special_tx(self, cmd_tshark, capture_file, test_env):
+        '''Computed txid of a provider registration (DIP-0002) transaction.'''
+        stdout = self.run(cmd_tshark, capture_file, test_env,
+                '-Ydash.tx.type == 1', '-Tfields', '-edash.tx.txid')
+        assert 'e3c9b20f4b99ccad29583119d7378f8ee75dd383036e6c2d288aab0ab3d9399b' in stdout
+
+    def test_dash_clsig(self, cmd_tshark, capture_file, test_env):
+        stdout = self.run(cmd_tshark, capture_file, test_env,
+                '-Ydash.command == "clsig"', '-Tfields', '-edash.clsig.height')
+        assert stdout.strip() == '187'
+
 class TestDissectGit:
     def test_git_prot(self, cmd_tshark, capture_file, features, test_env):
         '''
