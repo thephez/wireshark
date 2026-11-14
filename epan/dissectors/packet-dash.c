@@ -7,7 +7,67 @@
  * the Bitcoin message framing and many Bitcoin messages, and adds messages
  * for masternodes, long-living masternode quorums (LLMQs), ChainLocks,
  * InstantSend, CoinJoin, governance, sporks, compressed headers and
- * special (DIP-0002) transactions.
+ * special (DIP-0002) transactions.  All 74 commands of Dash Core v24.0.1
+ * (protocol version 70242) are dissected.
+ *
+ * Detection
+ *   Connections are recognized by a heuristic: the 4-byte network magic
+ *   (mainnet, testnet, devnet or regtest) followed by a printable,
+ *   NUL-padded command name.  No TCP port is registered by default:
+ *   9999 (mainnet) is also used by TP-Link Smart Home and 19999 (testnet)
+ *   is the IANA port of DNP3 over TLS.  TP-Link rejects Dash traffic, so
+ *   mainnet works as is; for testnet set the Dash "TCP port(s)"
+ *   preference to 19999, or enable TCP's "Try heuristic sub-dissectors
+ *   first".  The same applies to any other port claimed by another
+ *   dissector (e.g. the ports used by Dash Core's functional tests).
+ *
+ * Encrypted (BIP324, "v2") transport
+ *   Dash Core enables BIP324 by default (-v2transport), and two such
+ *   nodes encrypt their connection.  That traffic cannot be dissected.
+ *   To capture plaintext, run the node with -v2transport=0: it then
+ *   neither starts nor accepts v2 connections.  Light clients and
+ *   functional tests normally use the plaintext (v1) transport.
+ *
+ * Negotiated protocol version
+ *   Some messages are encoded differently depending on the lower of the
+ *   two protocol versions announced in the peers' "version" messages:
+ *   mnlistdiff and qrinfo (masternode list entries, field order, ChainLock
+ *   signatures; versions 70225-70230), and the dsa flags byte (70241).
+ *   The dissector remembers the first version message from each side of
+ *   a conversation.  If the capture starts after the handshake, the
+ *   "Default protocol version" preference is used instead (70242).
+ *
+ * Generated fields
+ *   Values Dash Core derives rather than sends are added as generated
+ *   fields so messages can be correlated: transaction ids (dash.tx.txid,
+ *   including the asset-unlock "stable" txid), ChainLock and InstantSend
+ *   request ids, LLMQ sign hashes and inventory hashes, governance object,
+ *   vote, spork and dsq hashes, merkle roots of masternode list diffs and
+ *   Base58Check addresses.  Block hashes are not computed (they use X11,
+ *   not SHA256d).  Hashes are shown in the byte order Dash Core's RPC
+ *   interface uses, so they can be filtered on as printed by dash-cli.
+ *
+ * Adding a message
+ *   1. Write dissect_dash_msg_<command>(tvb, pinfo, tree, data).  tvb is
+ *      the payload, tree the "Payload" subtree and data a dash_pinfo_t *
+ *      (network magic, negotiated version).  Return the number of bytes
+ *      dissected; the framing code flags anything left over.  Use the
+ *      dash_add_*() helpers for CompactSize values, byte vectors and
+ *      reversed hashes, the dissect_dash_*() helpers for shared
+ *      structures (transactions, outpoints, bitsets, quorum commitments,
+ *      network addresses), and DASH_LOOP_CHECK() / dash_check_count() in
+ *      loops driven by counts read from the packet.
+ *   2. Add its fields to hf[], subtree indices to ett[] and expert items
+ *      to ei[] in proto_register_dash().
+ *   3. Register it in proto_reg_handoff_dash() with
+ *      dash_add_command("<command>", dissect_dash_msg_<command>).
+ *   4. New inventory types go in dash_inv_types[], new special
+ *      transaction types in dash_tx_types[] and dash_payload_dissectors[],
+ *      new LLMQ types in dash_llmq_types[].
+ *   The wire format is defined by the SERIALIZE_METHODS / Serialize code
+ *   of the corresponding class in Dash Core; NetMsgType in protocol.cpp
+ *   lists the commands.  test/suite_dissection.py (TestDissectDash) and
+ *   test/captures/dash-p2p.pcap hold one example of most commands.
  *
  * References:
  *   https://github.com/dashpay/dash (Dash Core, protocol version 70242)
