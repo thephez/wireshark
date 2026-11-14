@@ -583,7 +583,61 @@ static int hf_dash_qdata_mask;
 static int hf_dash_qdata_mask_vvec;
 static int hf_dash_qdata_mask_contrib;
 static int hf_dash_qdata_error;
-static int hf_dash_qdata_contributions;/* END GENERATED HF_DECL */
+static int hf_dash_qdata_contributions;
+static int hf_dash_getmnlistd_base_block_hash;
+static int hf_dash_getmnlistd_block_hash;
+static int hf_dash_mnlistdiff;
+static int hf_dash_mnlistdiff_version;
+static int hf_dash_mnlistdiff_base_block_hash;
+static int hf_dash_mnlistdiff_block_hash;
+static int hf_dash_mnlistdiff_deleted_mn_count;
+static int hf_dash_mnlistdiff_deleted_mns;
+static int hf_dash_mnlistdiff_deleted_mn;
+static int hf_dash_mnlistdiff_mn_count;
+static int hf_dash_mnlistdiff_mn_list;
+static int hf_dash_mnlistdiff_deleted_quorum_count;
+static int hf_dash_mnlistdiff_deleted_quorums;
+static int hf_dash_mnlistdiff_deleted_quorum;
+static int hf_dash_mnlistdiff_new_quorum_count;
+static int hf_dash_mnlistdiff_new_quorums;
+static int hf_dash_mnlistdiff_clsig_count;
+static int hf_dash_mnlistdiff_clsigs;
+static int hf_dash_mnlistdiff_clsig_entry;
+static int hf_dash_mnlistdiff_clsig;
+static int hf_dash_mnlistdiff_clsig_index_count;
+static int hf_dash_mnlistdiff_clsig_index;
+static int hf_dash_pmt;
+static int hf_dash_pmt_tx_count;
+static int hf_dash_pmt_hash_count;
+static int hf_dash_pmt_hash;
+static int hf_dash_pmt_flags;
+static int hf_dash_pmt_root;
+static int hf_dash_pmt_matched;
+static int hf_dash_sml_entry;
+static int hf_dash_sml_version;
+static int hf_dash_sml_confirmed_hash;
+static int hf_dash_sml_operator_pubkey;
+static int hf_dash_sml_voting_keyid;
+static int hf_dash_sml_is_valid;
+static int hf_dash_sml_type;
+static int hf_dash_sml_platform_http_port;
+static int hf_dash_sml_platform_node_id;
+static int hf_dash_getqrinfo_base_count;
+static int hf_dash_getqrinfo_base_hash;
+static int hf_dash_getqrinfo_block_hash;
+static int hf_dash_getqrinfo_extra_share;
+static int hf_dash_qrinfo_extra_share;
+static int hf_dash_qrinfo_last_commitment_count;
+static int hf_dash_qrinfo_last_commitments;
+static int hf_dash_qrinfo_snapshot_list_count;
+static int hf_dash_qrinfo_snapshot_list;
+static int hf_dash_qrinfo_diff_list_count;
+static int hf_dash_qrinfo_diff_list;
+static int hf_dash_qsnap;
+static int hf_dash_qsnap_skip_mode;
+static int hf_dash_qsnap_active_members;
+static int hf_dash_qsnap_skip_count;
+static int hf_dash_qsnap_skip_entry;/* END GENERATED HF_DECL */
 
 static int ett_dash;
 static int ett_dash_payload;
@@ -622,7 +676,15 @@ static int ett_dash_sig_entry;
 static int ett_dash_sig_inv_bits;
 static int ett_dash_sig_batch;
 static int ett_dash_isdlock_input;
-static int ett_dash_qdata_mask;/* END GENERATED ETT_DECL */
+static int ett_dash_qdata_mask;
+static int ett_dash_mnlistdiff;
+static int ett_dash_mnlistdiff_list;
+static int ett_dash_mnlistdiff_deleted_quorum;
+static int ett_dash_mnlistdiff_clsig;
+static int ett_dash_pmt;
+static int ett_dash_sml_entry;
+static int ett_dash_qsnap;
+static int ett_dash_qrinfo_list;/* END GENERATED ETT_DECL */
 
 static expert_field ei_dash_command_unknown;
 static expert_field ei_dash_checksum_bad;
@@ -639,7 +701,10 @@ static expert_field ei_dash_sig_inv_mode;
 static expert_field ei_dash_sig_inv_index;
 static expert_field ei_dash_sig_inv_padding;
 static expert_field ei_dash_qgetdata_error;
-static expert_field ei_dash_sig_inv_size;/* END GENERATED EI_DECL */
+static expert_field ei_dash_sig_inv_size;
+static expert_field ei_dash_pmt_invalid;
+static expert_field ei_dash_qsnap_skip_mode;
+static expert_field ei_dash_getqrinfo_too_many_bases;/* END GENERATED EI_DECL */
 
 static bool dash_desegment = true;
 static bool dash_verify_checksum = true;
@@ -1005,6 +1070,7 @@ dash_classify_script(proto_tree *tree, tvbuff_t *tvb, packet_info *pinfo, int of
 {
   unsigned    type = 0;
   proto_item *ti;
+
   if (len == 0) {
     type = 6;
   } else if (len == 25 && tvb_get_uint8(tvb, offset) == 0x76 && tvb_get_uint8(tvb, offset + 1) == 0xa9 &&
@@ -3822,6 +3888,588 @@ dash_register_llmq(void)
   dash_add_command("qdata",       dissect_dash_msg_qdata);
 }
 
+/*
+ * Masternode list sync and quorum rotation info:
+ *   getmnlistd / mnlistdiff  (evo/smldiff.h)
+ *   getqrinfo / qrinfo       (llmq/snapshot.h, DIP-0024)
+ *
+ * Protocol-version-dependent serialization (V = common protocol version).
+ * [real] = validated against captures of Dash Core functional tests (all at V=70242);
+ * [synthetic] = only checked with hand-built messages, using the
+ * dash.default_version preference to select V.
+ *
+ *   CSimplifiedMNListDiff (evo/smldiff.h:64-79)
+ *     V >= 70229 (MNLISTDIFF_VERSION_ORDER): u16 nVersion is the first field.     [real]
+ *     70225 <= V < 70229 (BLS_SCHEME_PROTO_VERSION): u16 nVersion follows cbTx.   [synthetic]
+ *     V < 70225: no nVersion at all.                                              [synthetic]
+ *     V >= 70230 (MNLISTDIFF_CHAINLOCKS_PROTO_VERSION): quorumsCLSigs map
+ *       (BLS sig -> set<u16> newQuorums indexes) follows newQuorums.              [real]
+ *
+ *   CSimplifiedMNListEntry (evo/simplifiedmns.h:72-101)
+ *     V >= 70228 (SMNLE_VERSIONED_PROTO_VERSION): u16 nVersion first.             [real]
+ *       Below that the reader assumes nVersion = 1 (LegacyBLS, :42).              [synthetic]
+ *     nVersion >= 3 (ExtAddr): ExtNetInfo instead of the 18-byte CService.        [synthetic]
+ *     pubKeyOperator uses the legacy BLS encoding iff nVersion == 1.              [real: v2 only]
+ *     V < 70227 (DMN_TYPE_PROTO_VERSION): entry ends after isValid.               [synthetic]
+ *     nVersion >= 2: u16 nType; Evo (nType 1) adds platformHTTPPort (only when
+ *       nVersion < 3) and platformNodeID.                                         [real: v2; v3 synthetic]
+ *     Note: for V == 70227 a v24 writer emits nType etc. based on the real
+ *     entry version, while the reader assumes version 1 (writer/reader
+ *     mismatch in Dash Core); we follow the reader.
+ *
+ *   CQuorumRotationInfo / CGetQuorumRotationInfo (llmq/snapshot.h:102-217)
+ *     No version-dependent layout.  EFFICIENT_QRINFO_VERSION (70236) only
+ *     changes how the server picks the diff bases (net_processing.cpp:5693).
+ *     The embedded diffs follow the CSimplifiedMNListDiff rules above.
+ *     extraShare == 1 (H-4C snapshot + diff)                                      [synthetic]
+ */
+
+/* llmq/snapshot.h:100 */
+#define DASH_MAX_BASE_BLOCK_HASHES 4096
+
+static const value_string dash_qsnap_skip_modes[] = {
+  { 0, "No skipping" },
+  { 1, "Skipping entries" },
+  { 2, "No skipping entries" },
+  { 3, "All skipped" },
+  { 0, NULL }
+};
+
+/* count elements of elem_size bytes must fit in the rest of the tvb
+ * (overflow-safe version of dash_check_len(count * elem_size)) */
+static void
+dash_mnl_check_count(tvbuff_t *tvb, int offset, uint64_t count, int elem_size)
+{
+  if (count > (uint64_t)tvb_reported_length_remaining(tvb, offset) / (uint64_t)elem_size)
+    THROW(ReportedBoundsError);
+}
+
+/* ------------------------------------------------------------------------
+ * CPartialMerkleTree (merkleblock.h:88-96, merkleblock.cpp)
+ * ------------------------------------------------------------------------ */
+
+typedef struct {
+  tvbuff_t *tvb;
+  int       hash_off;   /* offset of vHash[0] */
+  unsigned  nhashes;
+  int       bits_off;   /* offset of the flag bytes */
+  unsigned  nbits;      /* 8 * number of flag bytes */
+  uint32_t  ntx;
+  unsigned  bits_used;
+  unsigned  hashes_used;
+  bool      bad;
+  bool      have_match;
+  uint8_t   match[DASH_HASH_LEN];
+  unsigned  nmatch;
+} dash_pmt_state_t;
+
+static uint32_t
+dash_pmt_width(const dash_pmt_state_t *st, int height)
+{
+  return (uint32_t)(((uint64_t)st->ntx + ((uint64_t)1 << height) - 1) >> height);
+}
+
+/* CPartialMerkleTree::TraverseAndExtract (merkleblock.cpp:110-145) */
+static void
+dash_pmt_traverse(dash_pmt_state_t *st, int height, uint32_t pos, uint8_t *out)
+{
+  bool parent_of_match;
+
+  if (st->bad)
+    return;
+  if (st->bits_used >= st->nbits) {
+    st->bad = true;
+    return;
+  }
+  parent_of_match = (tvb_get_uint8(st->tvb, st->bits_off + st->bits_used / 8) >> (st->bits_used % 8)) & 1;
+  st->bits_used++;
+  if (height == 0 || !parent_of_match) {
+    if (st->hashes_used >= st->nhashes) {
+      st->bad = true;
+      return;
+    }
+    tvb_memcpy(st->tvb, out, st->hash_off + DASH_HASH_LEN * st->hashes_used, DASH_HASH_LEN);
+    st->hashes_used++;
+    if (height == 0 && parent_of_match) {
+      if (st->nmatch == 0) {
+        memcpy(st->match, out, DASH_HASH_LEN);
+        st->have_match = true;
+      }
+      st->nmatch++;
+    }
+  } else {
+    uint8_t buf[2 * DASH_HASH_LEN];
+    uint8_t first[DASH_HASH_LEN];
+
+    dash_pmt_traverse(st, height - 1, pos * 2, buf);
+    if (pos * 2 + 1 < dash_pmt_width(st, height - 1)) {
+      dash_pmt_traverse(st, height - 1, pos * 2 + 1, buf + DASH_HASH_LEN);
+      if (memcmp(buf, buf + DASH_HASH_LEN, DASH_HASH_LEN) == 0)
+        st->bad = true;
+    } else {
+      memcpy(buf + DASH_HASH_LEN, buf, DASH_HASH_LEN);
+    }
+    if (st->bad)
+      return;
+    gcry_md_hash_buffer(GCRY_MD_SHA256, first, buf, sizeof(buf));
+    gcry_md_hash_buffer(GCRY_MD_SHA256, out, first, DASH_HASH_LEN);
+  }
+}
+
+static void
+dash_reverse_hash(uint8_t *dst, const uint8_t *src)
+{
+  int i;
+  for (i = 0; i < DASH_HASH_LEN; i++)
+    dst[i] = src[DASH_HASH_LEN - 1 - i];
+}
+
+/*
+ * Partial merkle tree: u32 nTransactions, vector<uint256> vHash,
+ * vector<uint8_t> flag bytes (LSB-first bits).  The root and the matched
+ * transaction (for mnlistdiff: the coinbase) are computed as in
+ * CPartialMerkleTree::ExtractMatches.  If matched is non-NULL it receives
+ * the matched txid in wire order and *have_matched is set.
+ */
+static int
+dissect_dash_partial_merkle_tree(proto_tree *tree, tvbuff_t *tvb, packet_info *pinfo, int offset,
+                                 uint8_t *matched, bool *have_matched)
+{
+  proto_item      *ti;
+  proto_tree      *subtree;
+  dash_pmt_state_t st;
+  uint64_t         nhashes, i;
+  int              lenlen;
+  uint64_t         nflag;
+  int              nflag_bytes;
+
+  memset(&st, 0, sizeof(st));
+  st.tvb = tvb;
+  *have_matched = false;
+
+  subtree = dash_subtree(tree, hf_dash_pmt, ett_dash_pmt, tvb, offset, &ti);
+  st.ntx = dash_add_uint(subtree, hf_dash_pmt_tx_count, tvb, &offset, 4);
+  nhashes = dash_add_compactsize(subtree, hf_dash_pmt_hash_count, tvb, &offset);
+  dash_mnl_check_count(tvb, offset, nhashes, DASH_HASH_LEN);
+  st.hash_off = offset;
+  st.nhashes = (unsigned)nhashes;
+  for (i = 0; i < nhashes; i++)
+    dash_add_hash(subtree, hf_dash_pmt_hash, tvb, &offset);
+
+  nflag = dash_get_compactsize(tvb, offset, &lenlen);
+  nflag_bytes = dash_check_len(tvb, offset + lenlen, nflag);
+  st.bits_off = offset + lenlen;
+  st.nbits = (unsigned)nflag_bytes * 8;
+  dash_add_varbytes(subtree, hf_dash_pmt_flags, tvb, &offset);
+
+  /* Sanity checks of CPartialMerkleTree::ExtractMatches (merkleblock.cpp:166-190) */
+  if (st.ntx == 0 || nhashes > st.ntx || st.nbits < nhashes) {
+    st.bad = true;
+  } else {
+    uint8_t root[DASH_HASH_LEN], rev[DASH_HASH_LEN];
+    int     height = 0;
+    proto_item *gi;
+
+    while (dash_pmt_width(&st, height) > 1)
+      height++;
+    dash_pmt_traverse(&st, height, 0, root);
+    if (!st.bad && ((st.bits_used + 7) / 8 != (unsigned)nflag_bytes || st.hashes_used != st.nhashes))
+      st.bad = true;
+    if (!st.bad) {
+      dash_reverse_hash(rev, root);
+      gi = proto_tree_add_bytes_with_length(subtree, hf_dash_pmt_root, tvb, st.hash_off,
+                                            offset - st.hash_off, rev, DASH_HASH_LEN);
+      proto_item_set_generated(gi);
+      if (st.have_match) {
+        dash_reverse_hash(rev, st.match);
+        gi = proto_tree_add_bytes_with_length(subtree, hf_dash_pmt_matched, tvb, st.hash_off,
+                                              offset - st.hash_off, rev, DASH_HASH_LEN);
+        proto_item_set_generated(gi);
+        if (matched) {
+          memcpy(matched, st.match, DASH_HASH_LEN);
+          *have_matched = true;
+        }
+      }
+    }
+  }
+  if (st.bad)
+    proto_tree_add_expert(subtree, pinfo, &ei_dash_pmt_invalid, tvb, st.hash_off, offset - st.hash_off);
+  proto_item_append_text(ti, " (%u transactions, %u hashes)", st.ntx, st.nhashes);
+  proto_item_set_end(ti, tvb, offset);
+  return offset;
+}
+
+/* ------------------------------------------------------------------------
+ * CSimplifiedMNListEntry (evo/simplifiedmns.h:72-101)
+ * ------------------------------------------------------------------------ */
+static int
+dissect_dash_sml_entry(proto_tree *tree, tvbuff_t *tvb, packet_info *pinfo, int offset, unsigned idx,
+                       const dash_pinfo_t *dpi)
+{
+  proto_item *ti, *pti;
+  proto_tree *subtree;
+  uint32_t    version = 1;  /* ProTxVersion::LegacyBLS, simplifiedmns.h:42 */
+  uint32_t    mn_type = 0;
+  uint32_t    common = dpi->common_version;
+  const char *protx;
+  bool        valid;
+
+  subtree = dash_subtree(tree, hf_dash_sml_entry, ett_dash_sml_entry, tvb, offset, &ti);
+  proto_item_append_text(ti, " #%u", idx);
+
+  /* simplifiedmns.h:74-77 */
+  if (common >= DASH_SMNLE_VERSIONED_PROTO_VERSION)
+    version = dash_add_uint(subtree, hf_dash_sml_version, tvb, &offset, 2);
+
+  protx = dash_rhash_str(pinfo->pool, tvb, offset, DASH_HASH_LEN);
+  dash_add_hash(subtree, hf_dash_protx_hash, tvb, &offset);
+  dash_add_hash(subtree, hf_dash_sml_confirmed_hash, tvb, &offset);
+  /* MnNetInfo for nVersion < ExtAddr (3), ExtNetInfo otherwise (simplifiedmns.h:81-82) */
+  offset = dissect_dash_netinfo(subtree, tvb, pinfo, offset, version >= 3);
+  /* Legacy BLS encoding iff nVersion == LegacyBLS (simplifiedmns.h:83) */
+  pti = dash_add_item(subtree, hf_dash_sml_operator_pubkey, tvb, &offset, DASH_BLS_PUBKEY_LEN, ENC_NA);
+  proto_item_append_text(pti, " (%s scheme)", version == 1 ? "legacy" : "basic");
+  dash_add_keyid(subtree, hf_dash_sml_voting_keyid, tvb, pinfo, &offset, dpi);
+  valid = tvb_get_uint8(tvb, offset) != 0;
+  dash_add_item(subtree, hf_dash_sml_is_valid, tvb, &offset, 1, ENC_NA);
+
+  /* simplifiedmns.h:86-100 */
+  if (common >= DASH_DMN_TYPE_PROTO_VERSION && version >= 2) {
+    mn_type = dash_add_uint(subtree, hf_dash_sml_type, tvb, &offset, 2);
+    if (mn_type == 1) {
+      if (version < 3)
+        dash_add_uint(subtree, hf_dash_sml_platform_http_port, tvb, &offset, 2);
+      dash_add_rhash(subtree, hf_dash_sml_platform_node_id, tvb, &offset, 20);
+    }
+  }
+
+  proto_item_append_text(ti, ": %s, v%u %s%s", protx, version,
+                         val_to_str_const(mn_type, dash_mn_types, "Unknown type"),
+                         valid ? "" : ", invalid");
+  proto_item_set_end(ti, tvb, offset);
+  return offset;
+}
+
+/* ------------------------------------------------------------------------
+ * CSimplifiedMNListDiff (evo/smldiff.h:44-79)
+ * hf >= 0: put everything in a subtree labelled with hf (embedded in qrinfo);
+ * hf < 0: add directly to tree and summarize in the Info column.
+ * ------------------------------------------------------------------------ */
+static int
+dissect_dash_mnlistdiff_body(proto_tree *tree, int hf, const char *label, tvbuff_t *tvb, packet_info *pinfo,
+                             int offset, const dash_pinfo_t *dpi)
+{
+  proto_item *ti = NULL, *lti;
+  proto_tree *subtree = tree, *ltree;
+  uint32_t    common = dpi->common_version;
+  uint64_t    count, i;
+  uint64_t    n_deleted_mns, n_mns, n_deleted_q, n_new_q;
+  int         cb_start, list_start;
+  uint8_t     matched[DASH_HASH_LEN];
+  bool        have_matched;
+  const char *block;
+
+  if (hf >= 0) {
+    subtree = dash_subtree(tree, hf, ett_dash_mnlistdiff, tvb, offset, &ti);
+    if (label)
+      proto_item_set_text(ti, "%s", label);
+  }
+
+  /* smldiff.h:66-68 */
+  if (common >= DASH_MNLISTDIFF_VERSION_ORDER)
+    dash_add_uint(subtree, hf_dash_mnlistdiff_version, tvb, &offset, 2);
+  dash_add_hash(subtree, hf_dash_mnlistdiff_base_block_hash, tvb, &offset);
+  block = dash_rhash_str(pinfo->pool, tvb, offset, DASH_HASH_LEN);
+  dash_add_hash(subtree, hf_dash_mnlistdiff_block_hash, tvb, &offset);
+  offset = dissect_dash_partial_merkle_tree(subtree, tvb, pinfo, offset, matched, &have_matched);
+
+  cb_start = offset;
+  offset = dissect_dash_tx(subtree, tvb, pinfo, offset, -1, dpi);
+  if (have_matched && tvb_bytes_exist(tvb, cb_start, offset - cb_start)) {
+    uint8_t txid[DASH_HASH_LEN];
+    dash_sha256d(tvb, cb_start, offset - cb_start, txid);
+    if (memcmp(txid, matched, DASH_HASH_LEN) != 0)
+      proto_tree_add_expert_format(subtree, pinfo, &ei_dash_pmt_invalid, tvb, cb_start, offset - cb_start,
+                                   "Coinbase txid does not match the partial merkle tree match");
+  }
+
+  /* smldiff.h:70-73 */
+  if (common >= DASH_BLS_SCHEME_PROTO_VERSION && common < DASH_MNLISTDIFF_VERSION_ORDER)
+    dash_add_uint(subtree, hf_dash_mnlistdiff_version, tvb, &offset, 2);
+
+  /* deletedMNs: vector<uint256> */
+  list_start = offset;
+  n_deleted_mns = count = dash_add_compactsize(subtree, hf_dash_mnlistdiff_deleted_mn_count, tvb, &offset);
+  if (count) {
+    dash_mnl_check_count(tvb, offset, count, DASH_HASH_LEN);
+    ltree = dash_subtree(subtree, hf_dash_mnlistdiff_deleted_mns, ett_dash_mnlistdiff_list, tvb, list_start, &lti);
+    for (i = 0; i < count; i++)
+      dash_add_hash(ltree, hf_dash_mnlistdiff_deleted_mn, tvb, &offset);
+    proto_item_append_text(lti, " (%" PRIu64 ")", count);
+    proto_item_set_end(lti, tvb, offset);
+  }
+
+  /* mnList: vector<CSimplifiedMNListEntry> */
+  list_start = offset;
+  n_mns = count = dash_add_compactsize(subtree, hf_dash_mnlistdiff_mn_count, tvb, &offset);
+  if (count) {
+    ltree = dash_subtree(subtree, hf_dash_mnlistdiff_mn_list, ett_dash_mnlistdiff_list, tvb, list_start, &lti);
+    for (i = 0; i < count; i++) {
+      DASH_LOOP_CHECK(tvb, offset);
+      offset = dissect_dash_sml_entry(ltree, tvb, pinfo, offset, (unsigned)i, dpi);
+    }
+    proto_item_append_text(lti, " (%" PRIu64 ")", count);
+    proto_item_set_end(lti, tvb, offset);
+  }
+
+  /* deletedQuorums: vector<pair<uint8_t (LLMQType), uint256>> */
+  list_start = offset;
+  n_deleted_q = count = dash_add_compactsize(subtree, hf_dash_mnlistdiff_deleted_quorum_count, tvb, &offset);
+  if (count) {
+    dash_mnl_check_count(tvb, offset, count, (1 + DASH_HASH_LEN));
+    ltree = dash_subtree(subtree, hf_dash_mnlistdiff_deleted_quorums, ett_dash_mnlistdiff_list, tvb, list_start, &lti);
+    for (i = 0; i < count; i++) {
+      proto_item *qti;
+      proto_tree *qtree;
+      uint32_t    llmq_type;
+
+      qtree = dash_subtree(ltree, hf_dash_mnlistdiff_deleted_quorum, ett_dash_mnlistdiff_deleted_quorum,
+                           tvb, offset, &qti);
+      llmq_type = dash_add_uint(qtree, hf_dash_llmq_type, tvb, &offset, 1);
+      proto_item_append_text(qti, ": %s %s", val_to_str_const(llmq_type, dash_llmq_types, "Unknown"),
+                             dash_rhash_str(pinfo->pool, tvb, offset, DASH_HASH_LEN));
+      dash_add_hash(qtree, hf_dash_quorum_hash, tvb, &offset);
+      proto_item_set_end(qti, tvb, offset);
+    }
+    proto_item_append_text(lti, " (%" PRIu64 ")", count);
+    proto_item_set_end(lti, tvb, offset);
+  }
+
+  /* newQuorums: vector<CFinalCommitment> */
+  list_start = offset;
+  n_new_q = count = dash_add_compactsize(subtree, hf_dash_mnlistdiff_new_quorum_count, tvb, &offset);
+  if (count) {
+    ltree = dash_subtree(subtree, hf_dash_mnlistdiff_new_quorums, ett_dash_mnlistdiff_list, tvb, list_start, &lti);
+    for (i = 0; i < count; i++) {
+      DASH_LOOP_CHECK(tvb, offset);
+      offset = dissect_dash_final_commitment(ltree, hf_dash_commitment, tvb, pinfo, offset);
+    }
+    proto_item_append_text(lti, " (%" PRIu64 ")", count);
+    proto_item_set_end(lti, tvb, offset);
+  }
+
+  /* quorumsCLSigs: map<CBLSSignature, set<uint16_t>> (smldiff.h:76-78).
+   * The signature uses the global BLS scheme (not signalled). */
+  if (common >= DASH_MNLISTDIFF_CHAINLOCKS_PROTO_VERSION) {
+    list_start = offset;
+    count = dash_add_compactsize(subtree, hf_dash_mnlistdiff_clsig_count, tvb, &offset);
+    if (count) {
+      ltree = dash_subtree(subtree, hf_dash_mnlistdiff_clsigs, ett_dash_mnlistdiff_list, tvb, list_start, &lti);
+      for (i = 0; i < count; i++) {
+        proto_item    *cti;
+        proto_tree    *ctree;
+        uint64_t       nidx, j;
+        wmem_strbuf_t *idxs = wmem_strbuf_new(pinfo->pool, "");
+
+        DASH_LOOP_CHECK(tvb, offset);
+        ctree = dash_subtree(ltree, hf_dash_mnlistdiff_clsig_entry, ett_dash_mnlistdiff_clsig, tvb, offset, &cti);
+        dash_add_item(ctree, hf_dash_mnlistdiff_clsig, tvb, &offset, DASH_BLS_SIG_LEN, ENC_NA);
+        nidx = dash_add_compactsize(ctree, hf_dash_mnlistdiff_clsig_index_count, tvb, &offset);
+        dash_mnl_check_count(tvb, offset, nidx, 2);
+        for (j = 0; j < nidx; j++) {
+          uint32_t qidx = dash_add_uint(ctree, hf_dash_mnlistdiff_clsig_index, tvb, &offset, 2);
+          wmem_strbuf_append_printf(idxs, "%s%u", j ? "," : "", qidx);
+        }
+        proto_item_append_text(cti, ": quorums %s", wmem_strbuf_get_str(idxs));
+        proto_item_set_end(cti, tvb, offset);
+      }
+      proto_item_append_text(lti, " (%" PRIu64 ")", count);
+      proto_item_set_end(lti, tvb, offset);
+    }
+  }
+
+  if (hf >= 0) {
+    proto_item_append_text(ti, ": block %s, %" PRIu64 " MNs, %" PRIu64 " deleted, %" PRIu64 " new quorums",
+                           block, n_mns, n_deleted_mns, n_new_q);
+    proto_item_set_end(ti, tvb, offset);
+  } else {
+    col_append_fstr(pinfo->cinfo, COL_INFO, " (%" PRIu64 " MNs, %" PRIu64 " deleted, %" PRIu64 " new/%" PRIu64
+                    " deleted quorums)", n_mns, n_deleted_mns, n_new_q, n_deleted_q);
+  }
+  return offset;
+}
+
+/* ------------------------------------------------------------------------
+ * CQuorumSnapshot (llmq/snapshot.h:42-90)
+ * ------------------------------------------------------------------------ */
+static int
+dissect_dash_quorum_snapshot(proto_tree *tree, const char *label, tvbuff_t *tvb, packet_info *pinfo, int offset)
+{
+  proto_item *ti, *mti;
+  proto_tree *subtree;
+  int32_t     mode;
+  uint64_t    count, i;
+  wmem_strbuf_t *skips = wmem_strbuf_new(pinfo->pool, "");
+
+  subtree = dash_subtree(tree, hf_dash_qsnap, ett_dash_qsnap, tvb, offset, &ti);
+  if (label)
+    proto_item_set_text(ti, "%s", label);
+  /* SnapshotSkipMode is an enum class : int -> i32 */
+  mti = proto_tree_add_item_ret_int(subtree, hf_dash_qsnap_skip_mode, tvb, offset, 4, ENC_LITTLE_ENDIAN, &mode);
+  if (mode < 0 || mode > 3)
+    expert_add_info(pinfo, mti, &ei_dash_qsnap_skip_mode);
+  offset += 4;
+  /* WriteCompactSize + WriteFixedBitSet == DYNBITSET */
+  offset = dissect_dash_bitset(subtree, hf_dash_qsnap_active_members, tvb, pinfo, offset);
+  count = dash_add_compactsize(subtree, hf_dash_qsnap_skip_count, tvb, &offset);
+  dash_mnl_check_count(tvb, offset, count, 4);
+  for (i = 0; i < count; i++) {
+    int32_t v = dash_add_int(subtree, hf_dash_qsnap_skip_entry, tvb, &offset, 4);
+    if (i < 16)
+      wmem_strbuf_append_printf(skips, "%s%d", i ? "," : "", v);
+    else if (i == 16)
+      wmem_strbuf_append(skips, ",...");
+  }
+  proto_item_append_text(ti, ": %s", val_to_str_const(mode, dash_qsnap_skip_modes, "Unknown mode"));
+  if (count)
+    proto_item_append_text(ti, ", skip list [%s]", wmem_strbuf_get_str(skips));
+  proto_item_set_end(ti, tvb, offset);
+  return offset;
+}
+
+/* ------------------------------------------------------------------------
+ * Message handlers
+ * ------------------------------------------------------------------------ */
+
+/* getmnlistd: CGetSimplifiedMNListDiff (evo/smldiff.h:35-42) */
+static int
+dissect_dash_msg_getmnlistd(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+  int offset = 0;
+
+  dash_add_hash(tree, hf_dash_getmnlistd_base_block_hash, tvb, &offset);
+  col_append_fstr(pinfo->cinfo, COL_INFO, " (block %s)", dash_rhash_str(pinfo->pool, tvb, offset, DASH_HASH_LEN));
+  dash_add_hash(tree, hf_dash_getmnlistd_block_hash, tvb, &offset);
+  return offset;
+}
+
+/* mnlistdiff: CSimplifiedMNListDiff */
+static int
+dissect_dash_msg_mnlistdiff(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data)
+{
+  return dissect_dash_mnlistdiff_body(tree, -1, NULL, tvb, pinfo, 0, (const dash_pinfo_t *)data);
+}
+
+/* getqrinfo: CGetQuorumRotationInfo (llmq/snapshot.h:102-113) */
+static int
+dissect_dash_msg_getqrinfo(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+{
+  int      offset = 0;
+  uint64_t count, i;
+  bool     extra;
+  int      lenlen;
+  proto_item *cti;
+
+  /* LIMITED_VECTOR(baseBlockHashes, MAX_BASE_BLOCK_HASHES = 4096); the limit
+   * is enforced by the reader before any element is decoded, and the
+   * sender is punished (net_processing.cpp:5678-5696) */
+  count = dash_get_compactsize(tvb, offset, &lenlen);
+  cti = proto_tree_add_uint64(tree, hf_dash_getqrinfo_base_count, tvb, offset, lenlen, count);
+  offset += lenlen;
+  if (count > DASH_MAX_BASE_BLOCK_HASHES)
+    expert_add_info(pinfo, cti, &ei_dash_getqrinfo_too_many_bases);
+  dash_mnl_check_count(tvb, offset, count, DASH_HASH_LEN);
+  for (i = 0; i < count; i++)
+    dash_add_hash(tree, hf_dash_getqrinfo_base_hash, tvb, &offset);
+  col_append_fstr(pinfo->cinfo, COL_INFO, " (block %s, %" PRIu64 " bases",
+                  dash_rhash_str(pinfo->pool, tvb, offset, DASH_HASH_LEN), count);
+  dash_add_hash(tree, hf_dash_getqrinfo_block_hash, tvb, &offset);
+  extra = tvb_get_uint8(tvb, offset) != 0;
+  dash_add_item(tree, hf_dash_getqrinfo_extra_share, tvb, &offset, 1, ENC_NA);
+  col_append_str(pinfo->cinfo, COL_INFO, extra ? ", extra share)" : ")");
+  return offset;
+}
+
+/* qrinfo: CQuorumRotationInfo (llmq/snapshot.h:125-217) */
+static int
+dissect_dash_msg_qrinfo(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data)
+{
+  const dash_pinfo_t *dpi = (const dash_pinfo_t *)data;
+  int         offset = 0;
+  int         list_start;
+  bool        extra;
+  uint64_t    count, i;
+  proto_item *lti;
+  proto_tree *ltree;
+  uint64_t    n_commitments, n_snapshots, n_diffs;
+
+  /* Field order: snapshot.h:155-165 (snapshots before diffs) */
+  offset = dissect_dash_quorum_snapshot(tree, "Quorum snapshot at H-C", tvb, pinfo, offset);
+  offset = dissect_dash_quorum_snapshot(tree, "Quorum snapshot at H-2C", tvb, pinfo, offset);
+  offset = dissect_dash_quorum_snapshot(tree, "Quorum snapshot at H-3C", tvb, pinfo, offset);
+  offset = dissect_dash_mnlistdiff_body(tree, hf_dash_mnlistdiff, "Masternode list diff at tip", tvb, pinfo, offset, dpi);
+  offset = dissect_dash_mnlistdiff_body(tree, hf_dash_mnlistdiff, "Masternode list diff at H", tvb, pinfo, offset, dpi);
+  offset = dissect_dash_mnlistdiff_body(tree, hf_dash_mnlistdiff, "Masternode list diff at H-C", tvb, pinfo, offset, dpi);
+  offset = dissect_dash_mnlistdiff_body(tree, hf_dash_mnlistdiff, "Masternode list diff at H-2C", tvb, pinfo, offset, dpi);
+  offset = dissect_dash_mnlistdiff_body(tree, hf_dash_mnlistdiff, "Masternode list diff at H-3C", tvb, pinfo, offset, dpi);
+  extra = tvb_get_uint8(tvb, offset) != 0;
+  dash_add_item(tree, hf_dash_qrinfo_extra_share, tvb, &offset, 1, ENC_NA);
+  /* snapshot.h:173-177 */
+  if (extra) {
+    offset = dissect_dash_quorum_snapshot(tree, "Quorum snapshot at H-4C", tvb, pinfo, offset);
+    offset = dissect_dash_mnlistdiff_body(tree, hf_dash_mnlistdiff, "Masternode list diff at H-4C", tvb, pinfo, offset, dpi);
+  }
+
+  list_start = offset;
+  n_commitments = count = dash_add_compactsize(tree, hf_dash_qrinfo_last_commitment_count, tvb, &offset);
+  if (count) {
+    ltree = dash_subtree(tree, hf_dash_qrinfo_last_commitments, ett_dash_qrinfo_list, tvb, list_start, &lti);
+    for (i = 0; i < count; i++) {
+      DASH_LOOP_CHECK(tvb, offset);
+      offset = dissect_dash_final_commitment(ltree, hf_dash_commitment, tvb, pinfo, offset);
+    }
+    proto_item_append_text(lti, " (%" PRIu64 ")", count);
+    proto_item_set_end(lti, tvb, offset);
+  }
+
+  list_start = offset;
+  n_snapshots = count = dash_add_compactsize(tree, hf_dash_qrinfo_snapshot_list_count, tvb, &offset);
+  if (count) {
+    ltree = dash_subtree(tree, hf_dash_qrinfo_snapshot_list, ett_dash_qrinfo_list, tvb, list_start, &lti);
+    for (i = 0; i < count; i++) {
+      DASH_LOOP_CHECK(tvb, offset);
+      offset = dissect_dash_quorum_snapshot(ltree, NULL, tvb, pinfo, offset);
+    }
+    proto_item_append_text(lti, " (%" PRIu64 ")", count);
+    proto_item_set_end(lti, tvb, offset);
+  }
+
+  list_start = offset;
+  n_diffs = count = dash_add_compactsize(tree, hf_dash_qrinfo_diff_list_count, tvb, &offset);
+  if (count) {
+    ltree = dash_subtree(tree, hf_dash_qrinfo_diff_list, ett_dash_qrinfo_list, tvb, list_start, &lti);
+    for (i = 0; i < count; i++) {
+      DASH_LOOP_CHECK(tvb, offset);
+      offset = dissect_dash_mnlistdiff_body(ltree, hf_dash_mnlistdiff, NULL, tvb, pinfo, offset, dpi);
+    }
+    proto_item_append_text(lti, " (%" PRIu64 ")", count);
+    proto_item_set_end(lti, tvb, offset);
+  }
+
+  col_append_fstr(pinfo->cinfo, COL_INFO, " (%s%" PRIu64 " last commitments, %" PRIu64 " snapshots, %" PRIu64 " diffs)",
+                  extra ? "extra share, " : "", n_commitments, n_snapshots, n_diffs);
+  return offset;
+}
+
+static void
+dash_register_mnlist(void)
+{
+  dash_add_command("getmnlistd", dissect_dash_msg_getmnlistd);
+  dash_add_command("mnlistdiff", dissect_dash_msg_mnlistdiff);
+  dash_add_command("getqrinfo", dissect_dash_msg_getqrinfo);
+  dash_add_command("qrinfo", dissect_dash_msg_qrinfo);
+}
+
 void
 proto_register_dash(void)
 {
@@ -5335,6 +5983,276 @@ proto_register_dash(void)
       { "Encrypted contributions", "dash.qdata.contributions",
         FT_NONE, BASE_NONE, NULL, 0x0,
         NULL, HFILL }
+    },
+    { &hf_dash_getmnlistd_base_block_hash,
+      { "Base block hash", "dash.getmnlistd.base_block_hash",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        "All zero = diff from the empty list", HFILL }
+    },
+    { &hf_dash_getmnlistd_block_hash,
+      { "Block hash", "dash.getmnlistd.block_hash",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_mnlistdiff,
+      { "Masternode list diff", "dash.mnlistdiff",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_mnlistdiff_version,
+      { "Version", "dash.mnlistdiff.version",
+        FT_UINT16, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_mnlistdiff_base_block_hash,
+      { "Base block hash", "dash.mnlistdiff.base_block_hash",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_mnlistdiff_block_hash,
+      { "Block hash", "dash.mnlistdiff.block_hash",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_mnlistdiff_deleted_mn_count,
+      { "Deleted masternode count", "dash.mnlistdiff.deleted_mn_count",
+        FT_UINT64, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_mnlistdiff_deleted_mns,
+      { "Deleted masternodes", "dash.mnlistdiff.deleted_mns",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_mnlistdiff_deleted_mn,
+      { "Deleted ProRegTx hash", "dash.mnlistdiff.deleted_mn",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_mnlistdiff_mn_count,
+      { "Masternode entry count", "dash.mnlistdiff.mn_count",
+        FT_UINT64, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_mnlistdiff_mn_list,
+      { "Masternode list", "dash.mnlistdiff.mn_list",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_mnlistdiff_deleted_quorum_count,
+      { "Deleted quorum count", "dash.mnlistdiff.deleted_quorum_count",
+        FT_UINT64, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_mnlistdiff_deleted_quorums,
+      { "Deleted quorums", "dash.mnlistdiff.deleted_quorums",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_mnlistdiff_deleted_quorum,
+      { "Deleted quorum", "dash.mnlistdiff.deleted_quorum",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_mnlistdiff_new_quorum_count,
+      { "New quorum count", "dash.mnlistdiff.new_quorum_count",
+        FT_UINT64, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_mnlistdiff_new_quorums,
+      { "New quorums", "dash.mnlistdiff.new_quorums",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_mnlistdiff_clsig_count,
+      { "Quorum ChainLock signature count", "dash.mnlistdiff.clsig_count",
+        FT_UINT64, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_mnlistdiff_clsigs,
+      { "Quorum ChainLock signatures", "dash.mnlistdiff.clsigs",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_mnlistdiff_clsig_entry,
+      { "ChainLock signature entry", "dash.mnlistdiff.clsig_entry",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_mnlistdiff_clsig,
+      { "ChainLock signature", "dash.mnlistdiff.clsig",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_mnlistdiff_clsig_index_count,
+      { "Quorum index count", "dash.mnlistdiff.clsig_index_count",
+        FT_UINT64, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_mnlistdiff_clsig_index,
+      { "New quorum index", "dash.mnlistdiff.clsig_index",
+        FT_UINT16, BASE_DEC, NULL, 0x0,
+        "Index into newQuorums", HFILL }
+    },
+    { &hf_dash_pmt,
+      { "Coinbase merkle tree", "dash.pmt",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_pmt_tx_count,
+      { "Total transactions", "dash.pmt.tx_count",
+        FT_UINT32, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_pmt_hash_count,
+      { "Hash count", "dash.pmt.hash_count",
+        FT_UINT64, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_pmt_hash,
+      { "Hash", "dash.pmt.hash",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_pmt_flags,
+      { "Flag bits", "dash.pmt.flags",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_pmt_root,
+      { "Merkle root", "dash.pmt.root",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        "Computed from the partial merkle tree", HFILL }
+    },
+    { &hf_dash_pmt_matched,
+      { "Matched transaction", "dash.pmt.matched",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        "Computed from the partial merkle tree", HFILL }
+    },
+    { &hf_dash_sml_entry,
+      { "Masternode entry", "dash.sml",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_sml_version,
+      { "Version", "dash.sml.version",
+        FT_UINT16, BASE_DEC, VALS(dash_protx_versions), 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_sml_confirmed_hash,
+      { "Confirmed hash", "dash.sml.confirmed_hash",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_sml_operator_pubkey,
+      { "Operator public key", "dash.sml.operator_pubkey",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_sml_voting_keyid,
+      { "Voting key ID", "dash.sml.voting_keyid",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_sml_is_valid,
+      { "Valid", "dash.sml.is_valid",
+        FT_BOOLEAN, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_sml_type,
+      { "Type", "dash.sml.type",
+        FT_UINT16, BASE_DEC, VALS(dash_mn_types), 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_sml_platform_http_port,
+      { "Platform HTTP port", "dash.sml.platform_http_port",
+        FT_UINT16, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_sml_platform_node_id,
+      { "Platform node ID", "dash.sml.platform_node_id",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_getqrinfo_base_count,
+      { "Base block hash count", "dash.getqrinfo.base_count",
+        FT_UINT64, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_getqrinfo_base_hash,
+      { "Base block hash", "dash.getqrinfo.base_hash",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_getqrinfo_block_hash,
+      { "Block request hash", "dash.getqrinfo.block_hash",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_getqrinfo_extra_share,
+      { "Extra share", "dash.getqrinfo.extra_share",
+        FT_BOOLEAN, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_qrinfo_extra_share,
+      { "Extra share", "dash.qrinfo.extra_share",
+        FT_BOOLEAN, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_qrinfo_last_commitment_count,
+      { "Last commitment per index count", "dash.qrinfo.last_commitment_count",
+        FT_UINT64, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_qrinfo_last_commitments,
+      { "Last commitment per index", "dash.qrinfo.last_commitments",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_qrinfo_snapshot_list_count,
+      { "Quorum snapshot list count", "dash.qrinfo.snapshot_list_count",
+        FT_UINT64, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_qrinfo_snapshot_list,
+      { "Quorum snapshot list", "dash.qrinfo.snapshot_list",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_qrinfo_diff_list_count,
+      { "Masternode list diff list count", "dash.qrinfo.diff_list_count",
+        FT_UINT64, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_qrinfo_diff_list,
+      { "Masternode list diff list", "dash.qrinfo.diff_list",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_qsnap,
+      { "Quorum snapshot", "dash.qsnap",
+        FT_NONE, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_qsnap_skip_mode,
+      { "Skip list mode", "dash.qsnap.skip_mode",
+        FT_INT32, BASE_DEC, VALS(dash_qsnap_skip_modes), 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_qsnap_active_members,
+      { "Active quorum members", "dash.qsnap.active_members",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_qsnap_skip_count,
+      { "Skip list count", "dash.qsnap.skip_count",
+        FT_UINT64, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
+    },
+    { &hf_dash_qsnap_skip_entry,
+      { "Skip list entry", "dash.qsnap.skip_entry",
+        FT_INT32, BASE_DEC, NULL, 0x0,
+        NULL, HFILL }
     },/* END GENERATED HF_REG */
   };
 
@@ -5376,7 +6294,15 @@ proto_register_dash(void)
     &ett_dash_sig_inv_bits,
     &ett_dash_sig_batch,
     &ett_dash_isdlock_input,
-    &ett_dash_qdata_mask,/* END GENERATED ETT_REG */
+    &ett_dash_qdata_mask,
+    &ett_dash_mnlistdiff,
+    &ett_dash_mnlistdiff_list,
+    &ett_dash_mnlistdiff_deleted_quorum,
+    &ett_dash_mnlistdiff_clsig,
+    &ett_dash_pmt,
+    &ett_dash_sml_entry,
+    &ett_dash_qsnap,
+    &ett_dash_qrinfo_list,/* END GENERATED ETT_REG */
   };
 
   static ei_register_info ei[] = {
@@ -5395,7 +6321,10 @@ proto_register_dash(void)
     { &ei_dash_sig_inv_index, { "dash.sig.inv_offset.invalid", PI_MALFORMED, PI_WARN, "Bitset index out of range or not increasing", EXPFILL } },
     { &ei_dash_sig_inv_padding, { "dash.sig.inv_bits.padding", PI_MALFORMED, PI_WARN, "Padding bits set in the last byte of the bitset", EXPFILL } },
     { &ei_dash_qgetdata_error, { "dash.qgetdata.error_present", PI_PROTOCOL, PI_WARN, "qgetdata carries a response-only nError byte (rejected as oversized by Dash Core v24)", EXPFILL } },
-    { &ei_dash_sig_inv_size, { "dash.sig.inv_size.too_large", PI_MALFORMED, PI_WARN, "Inventory size exceeds the maximum quorum size (400)", EXPFILL } },/* END GENERATED EI_REG */
+    { &ei_dash_sig_inv_size, { "dash.sig.inv_size.too_large", PI_MALFORMED, PI_WARN, "Inventory size exceeds the maximum quorum size (400)", EXPFILL } },
+    { &ei_dash_pmt_invalid, { "dash.pmt.invalid", PI_MALFORMED, PI_WARN, "Partial merkle tree is not well-formed", EXPFILL } },
+    { &ei_dash_qsnap_skip_mode, { "dash.qsnap.skip_mode.unknown", PI_PROTOCOL, PI_WARN, "Unknown skip list mode", EXPFILL } },
+    { &ei_dash_getqrinfo_too_many_bases, { "dash.getqrinfo.base_count.too_large", PI_PROTOCOL, PI_WARN, "More than MAX_BASE_BLOCK_HASHES (4096) base block hashes; Dash Core rejects the message and punishes the peer", EXPFILL } },/* END GENERATED EI_REG */
   };
 
   module_t        *dash_module;
@@ -5478,6 +6407,7 @@ proto_reg_handoff_dash(void)
 
   dash_register_coinjoin_gov();
   dash_register_llmq();
+  dash_register_mnlist();
 }
 
 /*
